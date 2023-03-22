@@ -1,4 +1,4 @@
 # Modware
 Description TODO
 ## Dependencies
-- libgrypt 1.10.1-2
+- libgcrypt 1.10.1-2
