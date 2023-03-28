@@ -2,8 +2,7 @@
 Description TODO
 
 ## Dependencies
-- dependency 1
-- dependency 2
+- go-modbus `go get github.com/dpapathanasiou/go-modbus`
 
 ## Modware Client
 Description of `ModwareClient`
