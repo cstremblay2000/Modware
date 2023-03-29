@@ -9,25 +9,38 @@
 package main
 
 import (
-	"net"
-	"os"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"crypto/rand"
 	"crypto/sha256"
+
+	"math"
+	"math/big"
+
+	"net"
+	"os"
 	"fmt"
 	"errors"
 	"io/ioutil"
+	"log"
+	//"time"
 )
 
 const (
-	HOST = "localhost"
-	PORT = "8080"
+	HOST = "127.0.0.1"
+	PORT = "5020"
 	TYPE = "tcp"
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
+)
+
+var (
+	pubKey rsa.PublicKey
+	privKey *rsa.PrivateKey
+	serverPub rsa.PublicKey
+	serverPriv *rsa.PrivateKey
 )
 
 /**
@@ -146,10 +159,10 @@ func rsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
  * returns:
  * 	nil if nothing bad happened
  */
- func rsaVerify(pubKey *rsa.PublicKey, message []byte, signature []byte) error {
+ func rsaVerify(pubKey rsa.PublicKey, message []byte, signature []byte) error {
 	hashed := sha256.Sum256(message)
 	return rsa.VerifyPSS(
-		pubKey,
+		&pubKey,
 		crypto.SHA256,
 		hashed[:],
 		signature,
@@ -159,74 +172,135 @@ func rsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
 
 /**
  * description:
- * 	the driver function
+ * 	A test suite of crypto functions
  */
-func main() {
-	pubKey, privKey, err := loadKeys( FILE_PUB, FILE_PRIV )
-	if( err != nil ) {
-		println( "Couldn't load public/private keys:", err.Error() )
-		os.Exit(1)
-	}
-	fmt.Println( pubKey )
-	fmt.Println( privKey )
+func testCrypto( pubKey rsa.PublicKey, privKey *rsa.PrivateKey ) {
+	fmt.Println( "public key =", pubKey )
+	println()
+	fmt.Println( "private key=", privKey )
+	println()
+
 	message := "hello, world!"
 	enc_message, err := rsaEncrypt( pubKey, []byte(message) )
 	if( err != nil ) {
 		println( "error encrypting:", err.Error() )
 		os.Exit(1)
 	}
-	signature, err := rsaSign( privKey, enc_message )
+
+	signature, err := rsaSign( privKey, []byte(message) )
 	if( err != nil ) {
 		println( "error signing message:", err.Error() )
 		os.Exit(1)
 	}
-	fmt.Println( enc_message )
-	fmt.Println( signature )
+	fmt.Println( "encrypt(", message, ") =", enc_message )
+	println()
+	fmt.Println( "sign(", message, ") =", signature )
+	println()
 
 	dec_message, err := rsaDecrypt( privKey, enc_message )
 	if( err != nil ) {
 		println( "Error decrypting:", err.Error() )
 		os.Exit(1)
 	}
-	fmt.Println( string(dec_message[:]) )
+	fmt.Println( "decrypted =", string(dec_message[:]) )
+	println()
 
 	err = rsaVerify( pubKey, []byte(message), signature )
 	if( err != nil ) {
 		println( "error verifying signature:", err.Error() )
 		os.Exit(1)
+	} else {
+		println( "Signature was verified" )
+	}
+	println()
+}
+
+func handleRequest(conn net.Conn) {
+	// Handle Incoming Request(s)
+	buffer := make([]byte, 2048)
+	fmt.Println( "IP Addr:", conn.RemoteAddr() ) 
+
+	bytesRead, err := conn.Read(buffer)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	tcpServer, err := net.ResolveTCPAddr(TYPE, HOST+":"+PORT)
+	// Write Incoming Data to Response
+	fmt.Println( bytesRead, buffer )
+
+	// create a unique challenge to for server
+	chall, err := rand.Int( rand.Reader, big.NewInt(math.MaxInt64) )
+	if( err != nil ) {
+		log.Fatal( err )
+	}
+	println( "chall:", chall )
+
+	// encrypt the challenge
+	enc_chall, err := rsaEncrypt( pubKey, []byte(chall) )
+	if( err != nil ) {
+		log.Fatal( err )
+	}
+
+	// open connection to ModwareServer and send
+	ModwareServer, err := net.ResolveTCPAddr( TYPE, conn.RemoteAddr() )
+	if( err != nil ) {
+		log.Fatal( err )
+	}
+
+	modwareServerConn, err := net.DialTCP( TYPE, nil, ModwareServer )
+	if( err != nil ) {
+		log.Fatal( err )
+	}
+
+	// write encrypted challenge out to modware server
+	_, err = modwareServerConn.Write( []byte(enc_chall) )
+	if( err != nil ) {
+		log.Fatal( err )
+	}
+
+	// wait for server to send back signed message
+}
+
+/**
+ * description:
+ * 	the driver function
+ */
+func main() {
+	// init RNG seed
+
+	// get public and private keys
+	pubKey, privKey, err := loadKeys( FILE_PUB, FILE_PRIV )
+	if( err != nil ) {
+		println( "Couldn't load public/private keys:", err.Error() )
+		os.Exit(1)
+	}
+	testCrypto( pubKey, privKey )
+
+	serverPub, serverPriv, err := loadKeys( "./server.public", "./server.private" )
+	if( err != nil ) {
+		println( "Couldn't load public/private keys:", err.Error() )
+		os.Exit(1)
+	}
+	testCrypto( serverPub, serverPriv )
+
+	// create tcp connection to modbus/tcp device
+	// and wait for data
+	listen, err := net.Listen(TYPE, HOST+":"+PORT)
 
 	if err != nil {
-		println("ResolveTCPAddr failed:", err.Error())
+		log.Fatal(err)
 		os.Exit(1)
 	}
 
-	conn, err := net.DialTCP(TYPE, nil, tcpServer)
-	if err != nil {
-		println("Dial Failed:", err.Error())
-		os.Exit(1)
+	// Close Listener
+	defer listen.Close()
+	for {
+		conn, err := listen.Accept()
+
+		if err != nil {
+			log.Fatal(err)
+			os.Exit(1)
+		}
+		go handleRequest(conn)
 	}
-
-	_, err = conn.Write([]byte("Message Here"))
-	if err != nil {
-		println("Write Data Failed:", err.Error())
-		os.Exit(1)
-	}
-
-	// Buffer to Get Data
-	recv := make([]byte, 1024)
-
-	_, err = conn.Read(recv)
-
-	if err != nil {
-		println("Read Data Failed:", err.Error())
-		os.Exit(1)
-	}
-
-	println("Received Message:", string(recv))
-
-	conn.Close()
-
 }
