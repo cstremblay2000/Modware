@@ -6,32 +6,26 @@
  * description
  * 	The ModwareClient
  */
+
 package main
 
 import (
-	"crypto"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"crypto/rand"
-	"crypto/sha256"
-
-	"math"
-	"math/big"
-
 	"net"
 	"os"
 	"fmt"
-	"errors"
-	"io/ioutil"
 	"log"
-	//"time"
+	"time"
+
+	"crypto/rsa"
+	//"crypto/rand"
+	//"crypto/hmac"
 )
 
 const (
 	HOST = "127.0.0.1"
 	PORT = "5020"
 	TYPE = "tcp"
+	TIMEOUT = 5 * time.Second 
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
 )
@@ -45,220 +39,146 @@ var (
 
 /**
  * description:
- * 	Loads public key and private key from a file
+ * 	Sends a challenge to modware server for it verify it's
+ *	identity
  * parameters:
- * 	pubKeyPath -> the path to the public key file
- * 	privKeyPath -> the path to the private key
- * Returns:
- * 	The public key, private key, error condition
+ *	modwareServerConn -> the TCP Connection to the ModwareServer
  */
+func attestChallenge( modwareServerConn net.Conn ) (string, error) {
+	// create ModwareServerBuffer
+	buffer := make( []byte, 1024 )
 
- func loadKeys(pubKeyFile, privateKeyFile string) (rsa.PublicKey, *rsa.PrivateKey, error) {
-	pubKeyData, err := ioutil.ReadFile(pubKeyFile)
-	if err != nil {
-		return rsa.PublicKey{}, nil, err
+	// create a unique challenge to for server
+	chall, err := MakeChallenge()
+	if( err != nil ){
+		return "", err
 	}
-	block, _ := pem.Decode(pubKeyData)
-	if block == nil {
-		return rsa.PublicKey{}, nil, errors.New("failed to decode public key PEM block")
-	}
-	if block.Type != "PUBLIC KEY" {
-		return rsa.PublicKey{}, nil, errors.New("unsupported public key type")
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return rsa.PublicKey{}, nil, err
-	}
+	println( "chall:", chall )
 
-	privateKeyData, err := ioutil.ReadFile(privateKeyFile)
-	if err != nil {
-		return rsa.PublicKey{}, nil, err
-	}
-	block, _ = pem.Decode(privateKeyData)
-	if block == nil {
-		return rsa.PublicKey{}, nil, errors.New("failed to decode private key PEM block")
-	}
-	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return rsa.PublicKey{}, nil, err
-	}
-
-	rsaPrivateKey, ok := privateKey.(*rsa.PrivateKey)
-	if !ok {
-		return rsa.PublicKey{}, nil, errors.New("unsupported private key type")
-	}
-
-	return *pubKey.(*rsa.PublicKey), rsaPrivateKey, nil
-}
-
-/**
- * description:
- *	encrypt a plaintext with RSA
- * parameters:
- *	pubKey -> the public key of the resource to communicate with
- *	plaintext -> the plaintext to be encrypt
- * returns:
- * 	The ciphertext
- */
-func rsaEncrypt(pubKey rsa.PublicKey, plaintext []byte) ([]byte, error) {
-	return rsa.EncryptOAEP(
-		sha256.New(),
-		rand.Reader,
-		&pubKey,
-		plaintext,
-		nil,
-	)
-}
-
-/**
- * description:
- *	decrypt a plaintext with RSA
- * parameters:
- *	privKey -> the private key loaded in from file
- *	ciphertext -> the cipher text to decrypt
- * returns:
- * 	The plaintext
- */
-func rsaDecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
-	return rsa.DecryptOAEP(
-		sha256.New(),
-		rand.Reader,
-		privKey,
-		ciphertext,
-		nil,
-	)
-}
-
-/**
- * description:
- *	Sign a message with client private key
- * parameters:
- *	privKey -> the private key from client
- *	message -> the message to sign
- * returns:
- * 	The signature
- */
-func rsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
-	hashed := sha256.Sum256( message )
-	return rsa.SignPSS(
-		rand.Reader,
-		privKey,
-		crypto.SHA256,
-		hashed[:],
-		nil,
-	)
-}
-
-/**
- * description:
- *	Verify a message with resources public key
- * parameters:
- *	pubKey -> public key of the resource to talk to 
- *	message -> the message that was signed
- * 	signature -> the signature of the message
- * returns:
- * 	nil if nothing bad happened
- */
- func rsaVerify(pubKey rsa.PublicKey, message []byte, signature []byte) error {
-	hashed := sha256.Sum256(message)
-	return rsa.VerifyPSS(
-		&pubKey,
-		crypto.SHA256,
-		hashed[:],
-		signature,
-		nil,
-	)
-}
-
-/**
- * description:
- * 	A test suite of crypto functions
- */
-func testCrypto( pubKey rsa.PublicKey, privKey *rsa.PrivateKey ) {
-	fmt.Println( "public key =", pubKey )
-	println()
-	fmt.Println( "private key=", privKey )
-	println()
-
-	message := "hello, world!"
-	enc_message, err := rsaEncrypt( pubKey, []byte(message) )
+	// encrypt the challenge
+	enc_chall, err := RsaEncrypt( serverPub, []byte(chall) )
 	if( err != nil ) {
-		println( "error encrypting:", err.Error() )
-		os.Exit(1)
+		return "", err
 	}
 
-	signature, err := rsaSign( privKey, []byte(message) )
+	// write encrypted challenge out to modware server
+	fmt.Println( "Sending Challenge" )
+	_, err = modwareServerConn.Write( enc_chall )
 	if( err != nil ) {
-		println( "error signing message:", err.Error() )
-		os.Exit(1)
+		return "", err
 	}
-	fmt.Println( "encrypt(", message, ") =", enc_message )
-	println()
-	fmt.Println( "sign(", message, ") =", signature )
-	println()
 
-	dec_message, err := rsaDecrypt( privKey, enc_message )
-	if( err != nil ) {
-		println( "Error decrypting:", err.Error() )
-		os.Exit(1)
-	}
-	fmt.Println( "decrypted =", string(dec_message[:]) )
-	println()
+	// wait for server to send back challenge signature
+	fmt.Println( "Waiting for challenge signature" )
+	modwareServerConn.SetReadDeadline( time.Now().Add( TIMEOUT ) )
 
-	err = rsaVerify( pubKey, []byte(message), signature )
+	bytesRead, err := modwareServerConn.Read(buffer)
 	if( err != nil ) {
-		println( "error verifying signature:", err.Error() )
-		os.Exit(1)
-	} else {
-		println( "Signature was verified" )
+		return "", err
 	}
-	println()
+	chall_sig := buffer[:bytesRead]
+	fmt.Println( "challenge signature:", chall_sig )
+
+	// verify if signature is valid
+	err = RsaVerify( serverPub, []byte(chall), chall_sig )
+	if( err != nil ) {
+		return "", err
+	}
+	fmt.Println( "signature verified" )
+	return chall, nil
+}
+
+func forwardModbusPacket( modwareServerConn net.Conn, mbrequest []byte, chall string ) error {
+	// calculate HMAC of modbus request
+	hmac := HMAC( []byte(chall), mbrequest )
+	fmt.Println( "created hmac:", hmac )
+
+	// wrap into struct and send out
+	packet := EncapsulatedModbusPacket {
+		MbPacket: mbrequest,
+		Hmac: hmac,
+	}
+	fmt.Println( "encapsulated packet", packet )
+
+	// encode packet into byte array
+	bytePacket, err := EncapsulatedModbusPacketToBytes( packet )
+	if( err != nil ) {
+		return err
+	}
+
+	// encrypt
+	enc_packet, err := RsaEncrypt( serverPub, bytePacket )
+	if( err != nil ){
+		return err
+	}
+
+	fmt.Println( enc_packet )
+
+	return nil
+}
+
+func recieveModbusResponse( modwareServerConn net.Conn, chall string ) ([]byte, error ) {
+
+	return nil, nil
 }
 
 func handleRequest(conn net.Conn) {
 	// Handle Incoming Request(s)
-	buffer := make([]byte, 2048)
-	fmt.Println( "IP Addr:", conn.RemoteAddr() ) 
+	buffer := make([]byte, 1024)
 
 	bytesRead, err := conn.Read(buffer)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Write Incoming Data to Response
-	fmt.Println( bytesRead, buffer )
-
-	// create a unique challenge to for server
-	chall, err := rand.Int( rand.Reader, big.NewInt(math.MaxInt64) )
-	if( err != nil ) {
-		log.Fatal( err )
-	}
-	println( "chall:", chall )
-
-	// encrypt the challenge
-	enc_chall, err := rsaEncrypt( pubKey, []byte(chall) )
-	if( err != nil ) {
-		log.Fatal( err )
-	}
+	mbrequest := buffer[:bytesRead]
+	fmt.Println( "Modbus request:", mbrequest )
 
 	// open connection to ModwareServer and send
-	ModwareServer, err := net.ResolveTCPAddr( TYPE, conn.RemoteAddr() )
+	fmt.Println( "connecting to:", conn.RemoteAddr() )
+	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5021" )
 	if( err != nil ) {
-		log.Fatal( err )
+		fmt.Println( "Error Resolving TCP Addr", err )
+		return
 	}
 
-	modwareServerConn, err := net.DialTCP( TYPE, nil, ModwareServer )
+	//modwareServerConn, err := net.DialTCP( TYPE, nil, conn.RemoteAddr().(*net.TCPAddr) )
+	modwareServerConn, err := net.DialTCP( TYPE, nil, modwareServerAddr )
 	if( err != nil ) {
-		log.Fatal( err )
+		fmt.Println( "Error Dialing Addr", modwareServerAddr, err )
+		return
 	}
 
-	// write encrypted challenge out to modware server
-	_, err = modwareServerConn.Write( []byte(enc_chall) )
-	if( err != nil ) {
-		log.Fatal( err )
+	// perform attestation with challenge
+	fmt.Println( "Starting attestation challenge" )
+	chall, err := attestChallenge( modwareServerConn )
+	if( err != nil ){
+		fmt.Println( "Error attesting challenge", err.Error() )
+		modwareServerConn.Close()
+		return
 	}
+	fmt.Println( "Attestation Succeeded")
 
-	// wait for server to send back signed message
+	// forware modbus request along
+	fmt.Println( "Forwarding Modbus Request")
+	err = forwardModbusPacket( modwareServerConn, mbrequest, chall )
+	if( err != nil ){
+		fmt.Println( "Error forwarding modbus request", err )
+		modwareServerConn.Close()
+		return
+	}
+	fmt.Println( "Forwarding Modbus Request Succeeded")
+
+	// wait for a response packet
+	fmt.Println( "Waiting for Response" )
+	mbresp, err := recieveModbusResponse( modwareServerConn, chall )
+	if( err != nil ) {
+		fmt.Println( "Error recieving packet", err )
+		modwareServerConn.Close()
+		return 
+	}
+	fmt.Println( "Successfully recieved mb response", mbresp )
+
+	modwareServerConn.Close()
 }
 
 /**
@@ -266,22 +186,20 @@ func handleRequest(conn net.Conn) {
  * 	the driver function
  */
 func main() {
-	// init RNG seed
+	var err error
 
-	// get public and private keys
-	pubKey, privKey, err := loadKeys( FILE_PUB, FILE_PRIV )
+		// get public and private keys
+	pubKey, privKey, err = LoadKeys( FILE_PUB, FILE_PRIV )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)
 	}
-	testCrypto( pubKey, privKey )
 
-	serverPub, serverPriv, err := loadKeys( "./server.public", "./server.private" )
+	serverPub, serverPriv, err = LoadKeys( "./server.public", "./server.private" )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)
 	}
-	testCrypto( serverPub, serverPriv )
 
 	// create tcp connection to modbus/tcp device
 	// and wait for data
