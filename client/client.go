@@ -15,10 +15,9 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"errors"
 
 	"crypto/rsa"
-	//"crypto/rand"
-	//"crypto/hmac"
 )
 
 const (
@@ -43,8 +42,11 @@ var (
  *	identity
  * parameters:
  *	modwareServerConn -> the TCP Connection to the ModwareServer
+ *	serverPubKey -> the public key of the ModwareServer we are speaking to
+ * returns:
+ *	Upon successful completion of the attestation, this returns the unique challenge
  */
-func attestChallenge( modwareServerConn net.Conn ) (string, error) {
+func attestChallenge( modwareServerConn net.Conn, serverPubKey rsa.PublicKey ) (string, error) {
 	// create ModwareServerBuffer
 	buffer := make( []byte, 1024 )
 
@@ -56,7 +58,7 @@ func attestChallenge( modwareServerConn net.Conn ) (string, error) {
 	println( "chall:", chall )
 
 	// encrypt the challenge
-	enc_chall, err := RsaEncrypt( serverPub, []byte(chall) )
+	enc_chall, err := RsaEncrypt( serverPubKey, []byte(chall) )
 	if( err != nil ) {
 		return "", err
 	}
@@ -80,7 +82,7 @@ func attestChallenge( modwareServerConn net.Conn ) (string, error) {
 	fmt.Println( "challenge signature:", chall_sig )
 
 	// verify if signature is valid
-	err = RsaVerify( serverPub, []byte(chall), chall_sig )
+	err = RsaVerify( serverPubKey, []byte(chall), chall_sig )
 	if( err != nil ) {
 		return "", err
 	}
@@ -88,7 +90,17 @@ func attestChallenge( modwareServerConn net.Conn ) (string, error) {
 	return chall, nil
 }
 
-func forwardModbusPacket( modwareServerConn net.Conn, mbrequest []byte, chall string ) error {
+/**
+ * description:
+ *	Creates and HMAC of the packet with the challenge, and then 
+ *	ecnrypts and sends the Modbus Request and HMAC to a ModwareServer
+ * parameters:
+ *	modwareServerConn -> the connection to the ModwareServer
+ *	mbrequest -> the Modbus request payload
+ *	chall -> the unique challenge generated during attestation
+ *	serverPubKey -> the public key of the ModwareServer
+ */
+func forwardModbusRequest( modwareServerConn net.Conn, mbrequest []byte, chall string, serverPubKey rsa.PublicKey ) error {
 	// calculate HMAC of modbus request
 	hmac := HMAC( []byte(chall), mbrequest )
 	fmt.Println( "created hmac:", hmac )
@@ -107,19 +119,92 @@ func forwardModbusPacket( modwareServerConn net.Conn, mbrequest []byte, chall st
 	}
 
 	// encrypt
-	enc_packet, err := RsaEncrypt( serverPub, bytePacket )
+	enc_packet, err := RsaEncrypt( serverPubKey, bytePacket )
 	if( err != nil ){
 		return err
 	}
+	fmt.Println( "Encrypted packet", enc_packet )
 
-	fmt.Println( enc_packet )
+	// send encrypted packet
+	_, err = modwareServerConn.Write( enc_packet )
+	if( err != nil ) {
+			return err
+	}
+ 	fmt.Println( "sent packet" )
 
 	return nil
 }
 
+/**
+ * description:
+ *	Recieves an encrypted modbus packet, decrypts it 
+ *	and verifies HMACs are correct
+ * parameters:
+ *	modwareServerConn -> the connection to the ModwareServer
+ *	chall -> the unique challenge generated during attestation
+ * returns:
+ *	The Modbus Response upon successful completion of cryptographic checks
+ */
 func recieveModbusResponse( modwareServerConn net.Conn, chall string ) ([]byte, error ) {
+	// create ModwareServerBuffer
+	buffer := make( []byte, 1024 )
 
-	return nil, nil
+	// wait for response
+	fmt.Println( "Waiting for challenge signature" )
+	modwareServerConn.SetReadDeadline( time.Now().Add( TIMEOUT ) )
+
+	bytesRead, err := modwareServerConn.Read(buffer)
+	if( err != nil ) {
+		return nil, err
+	}
+	sliced_buffer := buffer[:bytesRead]
+	fmt.Println( "Recieved encrypted packet", sliced_buffer )
+
+	// decrypt packet
+	dec_packet, err := RsaDecrypt( privKey, sliced_buffer )
+	if( err != nil ) {
+		return nil, err 
+	}
+	fmt.Println( "Decrypted", dec_packet )
+
+	// decode packet
+	packetStruct, err := DecodeEncapsulatedModbusPacketFromBytes( dec_packet )
+	if( err != nil ) {
+		return nil, err
+	}
+	fmt.Println( "Decoded", packetStruct.MbPacket, packetStruct.Hmac )
+
+	// verify HMACs
+	expectedHMAC := HMAC( []byte(chall), packetStruct.MbPacket )
+	if( !SameHMAC( expectedHMAC, packetStruct.Hmac ) ){
+		return nil, errors.New( "check HMACs: HMACs are not the same" )
+	}
+
+	return packetStruct.MbPacket, nil
+}
+
+/**
+ * description:
+ * 	forwards the request to the client device
+ * parameters:
+ * 	conn -> the connection to client conn
+ *	response -> the Modbus response payload
+ */
+func forwardModbusResponse( conn net.Conn, response []byte ) error {
+	_, err := conn.Write( response )
+	if( err != nil ) {
+		return err 
+	}
+	return nil 
+}
+
+/**
+ * description:
+ *	If a ModwareServer is not known to the ModwareClient
+ *	negotiate with the KeyServer to start communicating with it
+ */
+func verifyModwareServer() error {
+	return nil
 }
 
 func handleRequest(conn net.Conn) {
@@ -150,23 +235,25 @@ func handleRequest(conn net.Conn) {
 
 	// perform attestation with challenge
 	fmt.Println( "Starting attestation challenge" )
-	chall, err := attestChallenge( modwareServerConn )
+	chall, err := attestChallenge( modwareServerConn, serverPub )
 	if( err != nil ){
 		fmt.Println( "Error attesting challenge", err.Error() )
 		modwareServerConn.Close()
 		return
 	}
 	fmt.Println( "Attestation Succeeded")
+	fmt.Println()
 
 	// forware modbus request along
 	fmt.Println( "Forwarding Modbus Request")
-	err = forwardModbusPacket( modwareServerConn, mbrequest, chall )
+	err = forwardModbusRequest( modwareServerConn, mbrequest, chall, serverPub )
 	if( err != nil ){
 		fmt.Println( "Error forwarding modbus request", err )
 		modwareServerConn.Close()
 		return
 	}
 	fmt.Println( "Forwarding Modbus Request Succeeded")
+	fmt.Println()
 
 	// wait for a response packet
 	fmt.Println( "Waiting for Response" )
@@ -177,8 +264,20 @@ func handleRequest(conn net.Conn) {
 		return 
 	}
 	fmt.Println( "Successfully recieved mb response", mbresp )
+	fmt.Println()
 
+	// done with modware server at this point
 	modwareServerConn.Close()
+
+	// forward the response to the client
+	fmt.Println( "Forwarding Message back to Client Device" )
+	err = forwardModbusResponse( conn, mbresp )
+	if( err != nil ) { 
+		fmt.Println( "Error sending packet to device" )
+	} else {
+		fmt.Println( "Successfully sent packet to device")
+	}
+	conn.Close()
 }
 
 /**

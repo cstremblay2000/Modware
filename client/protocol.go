@@ -19,11 +19,24 @@ import (
 	"encoding/gob"
 )
 
+/**
+ * description:
+ * 	struct definition for encapsulating a modbus packet and HMAC
+ *	to send over the network
+ */
 type EncapsulatedModbusPacket struct {
 	MbPacket []byte
 	Hmac []byte
 }
 
+/**
+ * description:
+ *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
+ * parameteres:
+ * 	packetStruct -> the struct
+ * returns:
+ *	the gob encoded byte array
+ */
 func EncapsulatedModbusPacketToBytes( packetStruct EncapsulatedModbusPacket ) ( []byte, error ) {
 	buf := new(bytes.Buffer)
     enc := gob.NewEncoder(buf)
@@ -32,6 +45,25 @@ func EncapsulatedModbusPacketToBytes( packetStruct EncapsulatedModbusPacket ) ( 
         return nil, err
     }
     return buf.Bytes(), nil
+}
+
+/**
+ * description:
+ *	Take bytes and decode it to EncapsulatedModbusPacket struct 
+ * parameteres:
+ * 	bytes -> the struct
+ * returns:
+ *	the EncapsulatedModbusPacket struct
+ */
+func DecodeEncapsulatedModbusPacketFromBytes(b []byte) (*EncapsulatedModbusPacket, error) {
+    buf := bytes.NewBuffer(b)
+    dec := gob.NewDecoder(buf)
+    em := &EncapsulatedModbusPacket{}
+    err := dec.Decode(em)
+    if err != nil {
+        return nil, err
+    }
+    return em, nil
 }
 
 /**
@@ -162,6 +194,15 @@ func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
 	)
 }
 
+/**
+ * description:
+ *	Take a keyed hash of a byte array
+ * parameters:
+ *	key -> the key for the HMAC
+ *	message -> the message for the HMAC
+ * returns:
+ *	the HMAC with the given key and message
+ */
 func HMAC( key, message []byte ) ( []byte ) {
 	h := hmac.New(sha256.New, key)
     h.Write(message)
@@ -171,8 +212,22 @@ func HMAC( key, message []byte ) ( []byte ) {
 }
 
 /**
+ * description:
+ *	just a wrapper function so you don't have to include
+ *	extra stuff in your file
+ * returns:
+ *	true -> if macs are same
+ *	false -> otherwise
+ */
+func SameHMAC( mac1, mac2 []byte ) bool {
+	return hmac.Equal( mac1, mac2 )
+}
+
+/**
  * description
  * 	creates a unique challenge
+ * returns:
+ *	The challenge 
  */
 func MakeChallenge() (string, error) {
 	bChall, err := rand.Int( rand.Reader, big.NewInt(math.MaxInt64) )

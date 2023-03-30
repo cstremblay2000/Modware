@@ -1,7 +1,5 @@
 import socket
 import paramiko
-import gob
-import io
 
 from cryptography.hazmat.primitives import serialization, hashes, padding
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -122,16 +120,13 @@ def main():
         enc_encap_mb_req = conn.recv( 1024 )
 
         # decrypt encapsulated modbus request
-        encap_mb_req = rsaDecrype( serverPriv, enc_encap_mb_req )
+        encap_mb_req = rsaDecrypt( privKey, enc_encap_mb_req )
         print( "[mock server] decrypted encapsulated mb request", encap_mb_req )
         
         # encrypt packet and send it back to mimic a write coil request
         enc = rsaEncrypt( clientPub, encap_mb_req )
-        conn.write( enc )
+        conn.send( enc )
         
-        while( True ):
-            pass
-
         conn.close()
     return
 
