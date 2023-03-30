@@ -294,7 +294,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverPub, serverPriv, err = LoadKeys( "./server.public", "./server.private" )
+	serverPub, serverPriv, err = LoadKeys( "../dev_utils/server.public", "../dev_utils/server.private" )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)
