@@ -59,10 +59,11 @@ func main() {
 		log.Fatalf("Failed to read server private key: %v", err)
 	}
 	privKeyBlock, _ := pem.Decode(privKeyData)
-	privKey, err := x509.ParsePKCS1PrivateKey(privKeyBlock.Bytes)
+	privInterface, err := x509.ParsePKCS8PrivateKey(privKeyBlock.Bytes)
 	if err != nil {
 		log.Fatalf("Failed to parse server private key: %v", err)
 	}
+	privKey := privInterface.(*rsa.PrivateKey)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
