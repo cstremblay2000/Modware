@@ -1,4 +1,4 @@
-package dev_utils
+package main
 
 import (
 	"fmt"

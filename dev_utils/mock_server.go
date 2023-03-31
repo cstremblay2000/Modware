@@ -1,4 +1,4 @@
-package dev_utils
+package main
 
 import (
 	"crypto"
@@ -62,16 +62,6 @@ func main() {
 	privKey, err := x509.ParsePKCS1PrivateKey(privKeyBlock.Bytes)
 	if err != nil {
 		log.Fatalf("Failed to parse server private key: %v", err)
-	}
-
-	pubKeyData, err := ioutil.ReadFile("./server.public")
-	if err != nil {
-		log.Fatalf("Failed to read server public key: %v", err)
-	}
-	pubKeyBlock, _ := pem.Decode(pubKeyData)
-	pubKey, err := x509.ParsePKIXPublicKey(pubKeyBlock.Bytes)
-	if err != nil {
-		log.Fatalf("Failed to parse server public key: %v", err)
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
