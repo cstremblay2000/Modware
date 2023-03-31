@@ -22,20 +22,8 @@ def main():
     client.connect()
     print( client )
 
-    """
-    rr = client.read_coils( IX100_0 )
-    print( rr )
-    for i in range( len( rr.bits ) ):
-        print( rr.bits[i] )
-    print()
-    """
     client.write_coil( IX100_0, True, unit=1 )
     client.read_coils( IX100_0 )
-    """
-    for i in range( len( rr.bits ) ):
-        print( rr.bits[i] )
-    print()
-    """
 
     client.close()  
     return
