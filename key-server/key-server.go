@@ -32,8 +32,23 @@ func printLog( msg string ) {
  *	conn -> the connection to the client
  * 	serverIP -> the IP of the server
  */
-func givePublicKey( conn net.Conn, serverIP string ) {
-	printLog( "distributing public key" )
+func givePublicKey( conn net.Conn, serverIP string ) error {
+	// check if the client is allowed to talk to server
+
+	// get Modware public/private key
+
+	// generate unique challenge
+	chall, err := MakeChallenge()
+	if( err != nil ) {
+		fmt.Println( )
+	}
+
+	// create ModwareServer expected signature of challenge
+
+	// sign expected signature with KeyServer public key
+
+	// send ModwareServer public key, expected signature, signed signature, 
+	// and challenge to client
 }
 
 /**
