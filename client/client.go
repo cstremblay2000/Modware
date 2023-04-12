@@ -219,14 +219,49 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 		fmt.Println( "error recieving MAC address from ModwareServer", err )
 		return err
 	}
-	macAddr := buffer[:bytesRead]
+	macAddrByte := buffer[:bytesRead]
+	macAddr := string( buffer )
 
 	// connect to key server and send request for public key of server
+	fmt.Println( "connecting to:", conn.RemoteAddr() )
+	keyServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5022" )
+	if( err != nil ) {
+		fmt.Println( "Error Resolving TCP Addr", err )
+		return
+	}
+	keyServerConn, err := net.DialTCP( TYPE, nil, keyServerAddr )
+	if( err != nil ) {
+		fmt.Println( "Error Dialing Addr", modwareServerAddr, err )
+		return
+	}
 
+	// construct packet with IP and MAC
+	modwareServerAddr := modwareServerConn.RemoteAddr().String()
+	modwareServerIP, _, err := net.SplitHostPort(remoteAddr)
+	ipMacPacketStruct := VerifyHostIpMac {
+		Ip: modwareServerIP,
+		Mac: macAddr
+	}
+	payload, err := EncodeVerifyHostIpMacToBytes( ipMacPacketStruct )
+	if( err != nil ) {
+		fmt.Println( "error encoding struct to bytes", err )
+		return err
+	}
 
-	// send IP and MAC request to server
+	// send IP and MAC to KeyServer
+	_, err = keyServerConn.Write( payload )
+	if( err != nil ) {
+		fmt.Println( "error writing ip mac struct to KeyServer", err )
+		return err
+	}
 
 	// wait for response from KeyServer
+	bytesRead, err = keyServerConn.Read( buffer )
+	if( err != nil ) {
+		fmt.Println( "error recieving response from KeyServer", err )
+		return err 
+	}
+	data := buffer[:bytesRead] 
 
 	// wait for message from ModwareServer
 

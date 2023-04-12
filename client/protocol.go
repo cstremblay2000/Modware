@@ -41,6 +41,16 @@ type KeyServerChallengePublicKey struct {
 }
 
 /**
+ * descriptoin:
+ *	simple struct used by ModwareClient to encapsulate 
+ *	the IP and MAC address in a packet
+ */
+type VerifyHostIpMac struct {
+	Ip string
+	Mac string
+}
+
+/**
  * description:
  *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
  * parameteres:
