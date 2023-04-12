@@ -31,6 +31,17 @@ type EncapsulatedModbusPacket struct {
 
 /**
  * description:
+ *	The struct that is used by the KeyServer to send
+ *	the ModwareServer the challenge and public key
+ *	of a ModwareClient
+ */
+type KeyServerChallengePublicKey struct {
+	PublicKey rsa.PublicKey
+	Chall []byte
+}
+
+/**
+ * description:
  *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
  * parameteres:
  * 	packetStruct -> the struct
@@ -59,6 +70,43 @@ func DecodeEncapsulatedModbusPacketFromBytes(b []byte) (*EncapsulatedModbusPacke
     buf := bytes.NewBuffer(b)
     dec := gob.NewDecoder(buf)
     em := &EncapsulatedModbusPacket{}
+    err := dec.Decode(em)
+    if err != nil {
+        return nil, err
+    }
+    return em, nil
+}
+
+/**
+ * description:
+ *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
+ * parameteres:
+ * 	packetStruct -> the struct
+ * returns:
+ *	the gob encoded byte array
+ */
+ func VerifyHostKeyServerChallPublicKeyToBytes( packetStruct KeyServerChallengePublicKey ) ( []byte, error ) {
+	buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    err := enc.Encode(packetStruct)
+    if err != nil {
+        return nil, err
+    }
+    return buf.Bytes(), nil
+}
+
+/**
+ * description:
+ *	Take bytes and decode it to EncapsulatedModbusPacket struct 
+ * parameteres:
+ * 	bytes -> the struct
+ * returns:
+ *	the EncapsulatedModbusPacket struct
+ */
+func DecodeVerifyHostKeyServerChallPublicKeyFromBytes(b []byte) (*KeyServerChallengePublicKey, error) {
+    buf := bytes.NewBuffer(b)
+    dec := gob.NewDecoder(buf)
+    em := &KeyServerChallengePublicKey{}
     err := dec.Decode(em)
     if err != nil {
         return nil, err
@@ -113,6 +161,34 @@ func DecodeEncapsulatedModbusPacketFromBytes(b []byte) (*EncapsulatedModbusPacke
 	}
 
 	return *pubKey.(*rsa.PublicKey), rsaPrivateKey, nil
+}
+
+/**
+ * description:
+ *	Get the public key associated with the client
+ * parameters:
+ *	filepath -> the IP address of the cleint we are communicating wiht
+ * returns:
+ *	the public key, or an error upon an error
+ */
+ func LoadPublicKey( filepath string ) (rsa.PublicKey, error ) {
+	pubKeyData, err := ioutil.ReadFile( filepath )
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	block, _ := pem.Decode(pubKeyData)
+	if block == nil {
+		return rsa.PublicKey{}, err
+	}
+	if block.Type != "PUBLIC KEY" {
+		return rsa.PublicKey{}, err
+	}
+
+	pKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	return *pKey.(*rsa.PublicKey), nil
 }
 
 /**

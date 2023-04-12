@@ -14,12 +14,9 @@ import (
 	"log"
 	"net"
 	"os"
-	"io/ioutil"
 	"errors"
 
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 )
 
 // Define Variables
@@ -34,35 +31,6 @@ var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
 )
-
-/**
- * description:
- *	Get the public key associated with the client
- * parameters:
- *	clientIP -> the IP address of the cleint we are communicating wiht
- * returns:
- *	the public key, or an error upon an error
- */
-func getClientPubKey( clientIP string ) (rsa.PublicKey, error ) {
-	pubKeyFile := "../client.public"
-	pubKeyData, err := ioutil.ReadFile(pubKeyFile)
-	if err != nil {
-		return rsa.PublicKey{}, err
-	}
-	block, _ := pem.Decode(pubKeyData)
-	if block == nil {
-		return rsa.PublicKey{}, err
-	}
-	if block.Type != "PUBLIC KEY" {
-		return rsa.PublicKey{}, err
-	}
-
-	pKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return rsa.PublicKey{}, err
-	}
-	return *pKey.(*rsa.PublicKey), nil
-}
 
 /**
  * description:
@@ -249,7 +217,7 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
     fmt.Println("IP address:", clientIP)
 
 	// get public key of client
-	clientPublicKey, err := getClientPubKey( clientIP )
+	clientPublicKey, err := LoadPublicKey( clientIP )
 	fmt.Println( "Get public key for client", clientIP )
 
 	// attest the challenge
@@ -284,6 +252,58 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
 	return nil
 }
 
+func verifyHost( modwareClientConn net.Conn ) error {
+	// start up new server socket 
+	listen, err := net.Listen(TYPE, HOST+":"+"5022")
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
+	}
+
+	// listen for requests incoming from KeyServer
+	defer listen.Close()
+	keyServerConn, err := listen.Accept()
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
+	}
+
+	// recieve challenge and client public key from KeyServer
+	buffer := make( []byte, 1024 )
+	bytesRead, err := keyServerConn.Read( buffer )
+	keyServerConn.Close() 
+	listen.Close()
+	if( err != nil ) {
+		fmt.Println( "error getting data from KeyServer", err )
+		return err 
+	}
+	data := buffer[:bytesRead]
+
+	// extract challenge and ModwareClient public key
+	packetStruct,err := DecodeVerifyHostKeyServerChallPublicKeyFromBytes( data )
+	if( err != nil ) {
+		fmt.Println( "Error decapsulating packet",err  )
+		return err
+	}
+
+	// sign challenge
+	signedChall, err := RsaSign( privKey, packetStruct.Chall )
+	if( err != nil ) {
+		fmt.Println( "Error signing challenge", err )
+		return err
+	}
+
+	// send challenge out to ModwareClient
+	_, err = modwareClientConn.Write( signedChall ) 
+	if( err != nil ) {
+		fmt.Println( "error sending signed challenge to ModwareClient",err  )
+		return err
+	}
+
+	// save public key to PEM encoded file
+	return nil
+}
+
 /**
  * description:
  *	preprocess the request
@@ -300,7 +320,18 @@ func handleRequest(conn net.Conn) {
 		return 
 	}
 	recvMsg := buffer[:bytesRead]
+
+	// verify host logic 
+	if( string(recvMsg) == MAC ) {
+		err = verifyHost( conn )
+		if( err != nil ) {
+			fmt.Println( "Error verifying host", err )
+		}
+		conn.Close()
+		return
+	}
 	
+	// continute with verified communication
 	err = verifiedCommunication( conn, recvMsg )
 	if( err != nil ) {
 		fmt.Println( "Error performing secure communciation" )
