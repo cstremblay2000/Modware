@@ -16,7 +16,6 @@ import (
 	"os"
 	"io/ioutil"
 	"errors"
-	//"time"
 
 	"crypto/rsa"
 	"crypto/x509"
@@ -77,19 +76,9 @@ func getClientPubKey( clientIP string ) (rsa.PublicKey, error ) {
  *	the challenge for later use upons success
  * 	errors otherwise
  */
-func attestChallenge( modwareClientConn net.Conn, modwareClientPubKey rsa.PublicKey ) (string, error) {
-	// read buffer from client, and extract challenge
-	buffer := make([]byte, 1024)
-	bytesRead, err := modwareClientConn.Read( buffer )
-	if( err != nil ) {
-		fmt.Printf("Failed to decrypt challenge: %v\n", err)
-		return "", err
-	}
-	encChall := buffer[:bytesRead]
-	fmt.Println( "Recieved", bytesRead, "bytes")
-
+func attestChallenge( modwareClientConn net.Conn, modwareClientPubKey rsa.PublicKey, recvMsg []byte ) (string, error) {
 	// decrypt challenge with our private key
-	chall, err := RsaDecrypt( privKey, encChall )
+	chall, err := RsaDecrypt( privKey, recvMsg )
 	if err != nil {
 		fmt.Printf("Failed to decrypt challenge: %v", err)
 		return "", err
@@ -244,11 +233,12 @@ func forwardModbusResponse( modwareClientConn net.Conn, clientPublicKey rsa.Publ
  *	begin communication between verified hosts
  * parameters:
  *	conn -> the connection to the ModwareClient
+ * 	recvMsg -> the message initially recieved from the ModwareClient
  * returns:
  *	error upon error
  *	nil upon success
  */
-func verifiedCommunication( conn net.Conn ) error {
+func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
 	// get ip of client device
 	remoteAddr := conn.RemoteAddr()
     tcpAddr, ok := remoteAddr.(*net.TCPAddr)
@@ -264,7 +254,7 @@ func verifiedCommunication( conn net.Conn ) error {
 
 	// attest the challenge
 	fmt.Println( "Begining to attest challenge" )
-	chall, err := attestChallenge( conn, clientPublicKey )
+	chall, err := attestChallenge( conn, clientPublicKey, recvMsg )
 	if( err != nil ) {
 		fmt.Println( "error challenge attestation" )
 		return err
@@ -301,8 +291,17 @@ func verifiedCommunication( conn net.Conn ) error {
  *	conn -> the connection recieved
  */
 func handleRequest(conn net.Conn) {
+	// check to see if we are being verified
+	buffer := make([]byte, 1024)
+	bytesRead, err := conn.Read( buffer )
+	if( err != nil ) {
+		fmt.Println( "error reading message from client")
+		conn.Close()
+		return 
+	}
+	recvMsg := buffer[:bytesRead]
 	
-	err := verifiedCommunication( conn )
+	err = verifiedCommunication( conn, recvMsg )
 	if( err != nil ) {
 		fmt.Println( "Error performing secure communciation" )
 		conn.Close()
