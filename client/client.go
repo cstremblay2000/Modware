@@ -27,6 +27,7 @@ const (
 	TIMEOUT = 5 * time.Second 
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
+	MAC = "MAC"
 )
 
 var (
@@ -203,8 +204,42 @@ func forwardModbusResponse( conn net.Conn, response []byte ) error {
  *	If a ModwareServer is not known to the ModwareClient
  *	negotiate with the KeyServer to start communicating with it
  */
-func verifyModwareServer() error {
-	return nil
+func verifyModwareServer( modwareServerConn net.Conn ) error {
+	// send MAC address request to ModwareServer
+	_, err := modwareServerConn.Write( []byte( MAC ) )
+	if( err != nil ) {
+		fmt.Println( "error sending MAC request to Modware server", err )
+		return err
+	}
+
+	// get mac addr from ModwareServer
+	buffer := make( []byte, 1024 )
+	bytesRead, err := modwareServerConn.Read( buffer )
+	if( err != nil ) {
+		fmt.Println( "error recieving MAC address from ModwareServer", err )
+		return err
+	}
+	macAddr := buffer[:bytesRead]
+
+	// connect to key server and send request for public key of server
+
+
+	// send IP and MAC request to server
+
+	// wait for response from KeyServer
+
+	// wait for message from ModwareServer
+
+	// decrypt packet from KeyServer
+
+	// decode packet from KeyServer
+
+	// verify KeyServer signature for the signed challenge
+
+	// decrypt packet from ModwareServer
+
+	// check if expected signature from ModwareServer
+	// and KeyServer are the same
 }
 
 func handleRequest(conn net.Conn) {
@@ -294,7 +329,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverPub, serverPriv, err = LoadKeys( "../dev_utils/server.public", "../dev_utils/server.private" )
+	serverPub, serverPriv, err = LoadKeys( "..	/dev_utils/server.public", "../dev_utils/server.private" )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)
