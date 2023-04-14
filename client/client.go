@@ -16,6 +16,7 @@ import (
 	"log"
 	"time"
 	"errors"
+	"bytes"
 
 	"crypto/rsa"
 )
@@ -27,6 +28,7 @@ const (
 	TIMEOUT = 5 * time.Second 
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
+	MAC = "MAC"
 )
 
 var (
@@ -203,8 +205,133 @@ func forwardModbusResponse( conn net.Conn, response []byte ) error {
  *	If a ModwareServer is not known to the ModwareClient
  *	negotiate with the KeyServer to start communicating with it
  */
-func verifyModwareServer() error {
-	return nil
+func verifyModwareServer( modwareServerConn net.Conn ) error {
+	// send MAC address request to ModwareServer
+	_, err := modwareServerConn.Write( []byte( MAC ) )
+	if( err != nil ) {
+		fmt.Println( "error sending MAC request to Modware server", err )
+		return err
+	}
+
+	// get mac addr from ModwareServer
+	buffer := make( []byte, 1024 )
+	bytesRead, err := modwareServerConn.Read( buffer )
+	if( err != nil ) {
+		fmt.Println( "error recieving MAC address from ModwareServer", err )
+		return err
+	}
+	//macAddrByte := buffer[:bytesRead]
+	macAddr := string( buffer )
+
+	// connect to key server and send request for public key of server
+	fmt.Println( "connecting to:", modwareServerConn.RemoteAddr() )
+	keyServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5022" )
+	if( err != nil ) {
+		fmt.Println( "Error Resolving TCP Addr", err )
+		return err
+	}
+	keyServerConn, err := net.DialTCP( TYPE, nil, keyServerAddr )
+	if( err != nil ) {
+		fmt.Println( "Error Dialing Addr", keyServerAddr, err )
+		return err
+	}
+
+	// construct packet with IP and MAC
+	modwareServerAddr := modwareServerConn.RemoteAddr().String()
+	modwareServerIP, _, err := net.SplitHostPort(modwareServerAddr)
+	ipMacPacketStruct := VerifyHostIpMac {
+		Ip: modwareServerIP,
+		Mac: macAddr,
+	}
+	payload, err := EncodeVerifyHostIpMacToBytes( ipMacPacketStruct )
+	if( err != nil ) {
+		fmt.Println( "error encoding struct to bytes", err )
+		return err
+	}
+
+	// send IP and MAC to KeyServer
+	_, err = keyServerConn.Write( payload )
+	if( err != nil ) {
+		fmt.Println( "error writing ip mac struct to KeyServer", err )
+		return err
+	}
+
+	// wait for response from KeyServer
+	bytesRead, err = keyServerConn.Read( buffer )
+	if( err != nil ) {
+		fmt.Println( "error recieving response from KeyServer", err )
+		return err 
+	}
+	encryptKeyServerPacket := buffer[:bytesRead] 
+
+	// wait for message from ModwareServer
+	modwareServerBuffer := make( []byte, 1024 )
+	bytesRead, err = modwareServerConn.Read( modwareServerBuffer )
+	if( err != nil ) {
+		fmt.Println( "error recieving response ModwareServer", err )
+		return err
+	}
+	encryptModwareServerPacket := modwareServerBuffer[:bytesRead]
+
+	// decrypt packet from KeyServer
+	keyServerPublicKey, err := LoadPublicKey( "../key-server.public" )
+
+	if( err != nil ) {
+		fmt.Println( "error loading key server key", err )
+		return err
+	}
+	encodedKeyServerPacket, err := RsaDecrypt( privKey, encryptKeyServerPacket )
+	if( err != nil ) {
+		fmt.Println( "error decrypting KeyServer packet",err )
+		return err
+	}
+
+	// decode packet from KeyServer
+	decodedKeyServerPacket, err := VerifyHostExpectedResultsFromBytes( encodedKeyServerPacket )
+	if( err != nil ) {
+		fmt.Println( "error decoding packet to struct from KeyServer", err )
+		return err
+	}
+
+	// verify KeyServer signature for the signed challenge
+	err = RsaVerify( keyServerPublicKey, 
+		decodedKeyServerPacket.ModwareServerSignedChallenge,
+		decodedKeyServerPacket.KeyServerSignedSignature,
+	)
+	if( err != nil ) {
+		fmt.Println( "error verifying KeyServer signed signature", err )
+		return err
+	}
+
+	// decrypt packet from ModwareServer
+	modwareServerKey, err := LoadPublicKey( "../server/sever.public" )
+	if( err != nil ) {
+		fmt.Println( "error loading public key", err )
+		return err
+	}
+	recievedSignature, err := RsaDecrypt( privKey, encryptModwareServerPacket )
+	if( err != nil ) {
+		fmt.Println( "error decrypting ModwareServer signature", err )
+		return err
+	}
+
+	// Verify signature from ModwareServer
+	err = RsaVerify( modwareServerKey, 
+		[]byte(decodedKeyServerPacket.Challenge), 
+		recievedSignature,
+	)
+	if( err != nil ) {
+		fmt.Println( "error verifying ModwareServer expected signature", err )
+		return err
+	}
+	
+
+	// check if expected signature from ModwareServer
+	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.ModwareServerSignedChallenge ) ) {
+		return nil
+	} else {
+		return errors.New( "signatures were not the same" )
+	}
 }
 
 func handleRequest(conn net.Conn) {
