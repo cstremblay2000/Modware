@@ -1,95 +1,123 @@
-package main 
+package main
 
 import (
-	"net"
+	"crypto/rsa"
 	"fmt"
-	"os"
 	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 const (
-	// server socket variables
-	HOST = "localhost"
-	PORT = "5021"
-	TYPE = "tcp"
+	keyDir       = "keys"
+	keyExtension = ".pem"
+	HOST         = "localhost"
+	PORT         = "5020"
+	TYPE         = "tcp"
 )
 
-/**
- * description
- *	log function that prints things nicely
- * parameters:
- * 	msg -> the message to print
- */
-func printLog( msg string ) {
-	fmt.Println( "[key-server]", msg )
+type KeyStorage struct {
+	keys map[string]*rsa.PublicKey
 }
 
-/**
- * description:
- *	the protocol implementation that given a client
- *	the public key for a server
- * parameters:
- *	conn -> the connection to the client
- * 	serverIP -> the IP of the server
- */
-func givePublicKey( conn net.Conn, serverIP string ) error {
-	// check if the client is allowed to talk to server
+func NewKeyStorage() *KeyStorage {
+	return &KeyStorage{keys: make(map[string]*rsa.PublicKey)}
+}
 
-	// get Modware public/private key
+func (ks *KeyStorage) AddKey(ip string, key *rsa.PublicKey) {
+	ks.keys[ip] = key
+}
 
-	// generate unique challenge
-	chall, err := MakeChallenge()
-	if( err != nil ) {
-		fmt.Println( )
+func (ks *KeyStorage) GetKey(ip string) (*rsa.PublicKey, bool) {
+	key, ok := ks.keys[ip]
+	return key, ok
+}
+
+func printLog(msg string) {
+	fmt.Println("[key-server]", msg)
+}
+
+func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
+	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	pubKey, ok := keyStorage.GetKey(ip)
+	if !ok {
+		log.Printf("No public key found for IP: %s\n", ip)
+		return fmt.Errorf("no public key found for IP: %s", ip)
 	}
 
-	// create ModwareServer expected signature of challenge
-
-	// sign expected signature with KeyServer public key
-
-	// send ModwareServer public key, expected signature, signed signature, 
-	// and challenge to client
-}
-
-/**
- * description:
- *	handle a connection from a client
- * parameters:
- *	conn -> the connection to a client
- */
-func handleRequest( conn net.Conn ) {
-	// check which host this came from
-
-	// decrypt payload
-
-	// see if it is a public key request (should be)
-
-	conn.Close()
-}
-
-/**
- * description:
- * 	driver fuction
- */
-func main() {
-	// start server socket
-	listen, err := net.Listen(TYPE, HOST+":"+PORT)
+	challenge, err := MakeChallenge()
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		log.Printf("Error making challenge: %v", err)
+		return err
 	}
-	printLog( "socket listening" )
 
+	packet := KeyServerChallengePublicKey{
+		PublicKey: *pubKey,
+		Chall:     []byte(challenge),
+	}
 
-	// Close Listener
-	defer listen.Close()
-	for {
-		conn, err := listen.Accept()
+	packetBytes, err := VerifyHostKeyServerChallPublicKeyToBytes(packet)
+	if err != nil {
+		log.Printf("Error encoding packet: %v", err)
+		return err
+	}
 
-		if err != nil {
-			log.Fatal(err)
-			os.Exit(1)
+	_, err = conn.Write(packetBytes)
+	if err != nil {
+		log.Printf("Error sending packet: %v", err)
+		return err
+	}
+
+	log.Printf("Sent challenge and public key for IP: %s\n", ip)
+	return nil
+}
+
+func handleRequest(conn net.Conn, keyStorage *KeyStorage) {
+	defer conn.Close()
+
+	err := givePublicKey(conn, keyStorage)
+	if err != nil {
+		log.Printf("Error giving public key: %v", err)
+	}
+}
+
+func main() {
+	keyStorage := NewKeyStorage()
+
+	err := filepath.Walk(keyDir, func(path string, info os.FileInfo, err error) error {
+		if !info.IsDir() && strings.HasSuffix(path, keyExtension) {
+			ip := strings.TrimSuffix(info.Name(), keyExtension)
+			pubKey, err := LoadPublicKey(path)
+			if err != nil {
+				return err
+			}
+			keyStorage.AddKey(ip, &pubKey)
+			fmt.Printf("Loaded key for IP: %s\n", ip)
 		}
-		go handleRequest(conn)
+		return nil
+	})
+
+	if err != nil {
+		log.Fatalf("Error loading keys: %v", err)
+	}
+
+	listener, err := net.Listen(TYPE, HOST+":"+PORT)
+	if err != nil {
+		log.Fatalf("Error listening on %s:%s: %v", HOST, PORT, err)
+	}
+	defer listener.Close()
+
+	printLog("socket listening")
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Error accepting connection: %v", err)
+			continue
+		}
+		go handleRequest(conn, keyStorage)
 	}
 }
