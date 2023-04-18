@@ -2,7 +2,11 @@ package main
 
 import (
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -39,39 +43,103 @@ func printLog(msg string) {
 	fmt.Println("[key-server]", msg)
 }
 
-func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
-	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
-
-	pubKey, ok := keyStorage.GetKey(ip)
-	if !ok {
-		log.Printf("No public key found for IP: %s\n", ip)
-		return fmt.Errorf("no public key found for IP: %s", ip)
+func LoadPublicKey(pubKeyPath string) (rsa.PublicKey, error) {
+	pubKeyData, err := ioutil.ReadFile(pubKeyPath)
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	block, _ := pem.Decode(pubKeyData)
+	if block == nil {
+		return rsa.PublicKey{}, errors.New("failed to decode public key PEM block")
+	}
+	if block.Type != "PUBLIC KEY" {
+		return rsa.PublicKey{}, errors.New("unsupported public key type")
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return rsa.PublicKey{}, err
 	}
 
+	return *pubKey.(*rsa.PublicKey), nil
+}
+
+func sendEncryptedResponse(conn net.Conn, pubKeyModwareServer *rsa.PublicKey, ip string, privKeyServer *rsa.PrivateKey, pubKeyClient *rsa.PublicKey) error {
 	challenge, err := MakeChallenge()
 	if err != nil {
 		log.Printf("Error making challenge: %v", err)
 		return err
 	}
 
-	packet := KeyServerChallengePublicKey{
-		PublicKey: *pubKey,
+	sigChall, err := RsaSign(privKeyServer, []byte(challenge))
+	if err != nil {
+		log.Printf("Error signing challenge: %v", err)
+		return err
+	}
+
+	sigKS, err := RsaSign(privKeyServer, sigChall)
+	if err != nil {
+		log.Printf("Error signing sigChall: %v", err)
+		return err
+	}
+
+	dataToSend := struct {
+		PublicKey rsa.PublicKey
+		Chall     []byte
+		SigChall  []byte
+		SigKS     []byte
+	}{
+		PublicKey: *pubKeyModwareServer,
 		Chall:     []byte(challenge),
+		SigChall:  sigChall,
+		SigKS:     sigKS,
 	}
 
-	packetBytes, err := VerifyHostKeyServerChallPublicKeyToBytes(packet)
+	encodedDataToSend, err := RsaEncrypt(*pubKeyClient, dataToSend)
 	if err != nil {
-		log.Printf("Error encoding packet: %v", err)
+		log.Printf("Error encrypting data to send: %v", err)
 		return err
 	}
 
-	_, err = conn.Write(packetBytes)
+	_, err = conn.Write(encodedDataToSend)
 	if err != nil {
-		log.Printf("Error sending packet: %v", err)
+		log.Printf("Error sending encrypted data: %v", err)
 		return err
 	}
 
-	log.Printf("Sent challenge and public key for IP: %s\n", ip)
+	log.Printf("Sent encrypted public key, challenge, and signatures for IP: %s\n", ip)
+	return nil
+}
+
+func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
+	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	pubKeyModwareServer, ok := keyStorage.GetKey(ip)
+	if !ok {
+		log.Printf("No public key found for IP: %s\n", ip)
+		return fmt.Errorf("no public key found for IP: %s", ip)
+	}
+
+	pubKeyClient, ok := keyStorage.GetKey(ip) // Assuming the client's public key is stored in the keyStorage
+	if !ok {
+		log.Printf("No client public key found for IP: %s\n", ip)
+		return fmt.Errorf("no client public key found for IP: %s", ip)
+	}
+
+	// Replace the following line with the path to the key server's private key file
+	privKeyServerPath := "path/to/key_server_private_key.pem"
+
+	_, privKeyServer, err := LoadKeys("", privKeyServerPath)
+	if err != nil {
+		log.Printf("Error loading key server private key: %v", err)
+		return err
+	}
+
+	err = sendEncryptedPublicKey(conn, pubKeyModwareServer, ip, privKeyServer, pubKeyClient)
+	if err != nil {
+		log.Printf("Error sending encrypted public key: %v", err)
+		return err
+	}
+
 	return nil
 }
 
@@ -82,6 +150,53 @@ func handleRequest(conn net.Conn, keyStorage *KeyStorage) {
 	if err != nil {
 		log.Printf("Error giving public key: %v", err)
 	}
+}
+
+func sendEncryptedPublicKey(conn net.Conn, pubKeyModwareServer *rsa.PublicKey, ip string, privKeyServer *rsa.PrivateKey, pubKeyClient *rsa.PublicKey) error {
+	challenge, err := MakeChallenge()
+	if err != nil {
+		log.Printf("Error making challenge: %v", err)
+		return err
+	}
+
+	sigChall, err := RsaSign(privKeyServer, []byte(challenge))
+	if err != nil {
+		log.Printf("Error signing challenge: %v", err)
+		return err
+	}
+
+	sigKS, err := RsaSign(privKeyServer, sigChall)
+	if err != nil {
+		log.Printf("Error signing sigChall: %v", err)
+		return err
+	}
+
+	dataToSend := struct {
+		PublicKey rsa.PublicKey
+		Chall     []byte
+		SigChall  []byte
+		SigKS     []byte
+	}{
+		PublicKey: *pubKeyModwareServer,
+		Chall:     []byte(challenge),
+		SigChall:  sigChall,
+		SigKS:     sigKS,
+	}
+
+	encodedDataToSend, err := RsaEncrypt(*pubKeyClient, dataToSend)
+	if err != nil {
+		log.Printf("Error encrypting data to send: %v", err)
+		return err
+	}
+
+	_, err = conn.Write(encodedDataToSend)
+	if err != nil {
+		log.Printf("Error sending encrypted data: %v", err)
+		return err
+	}
+
+	log.Printf("Sent encrypted public key, challenge, and signatures for IP: %s\n", ip)
+	return nil
 }
 
 func main() {
