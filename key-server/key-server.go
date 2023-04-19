@@ -227,6 +227,9 @@ func main() {
 	keyStorage := NewKeyStorage()
 
 	err := filepath.Walk(keyDir, func(path string, info os.FileInfo, err error) error {
+		if( info == nil ) {
+			return nil
+		}
 		if !info.IsDir() && strings.HasSuffix(path, keyExtension) {
 			ip := strings.TrimSuffix(info.Name(), keyExtension)
 			pubKey, err := LoadPublicKey(path)
