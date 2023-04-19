@@ -1,3 +1,13 @@
+/**
+ * file:		client.go
+ * author:		Mohammad Eshan <me3031@rit.edu>
+  *				Chris Tremblay <cst1465@rit.edu>
+ * language: 	Go
+ * date:		4/19/2023, National Garlic Day!
+ * description
+ * 	The KeyServer
+ */
+
 package main
 
 import (
