@@ -233,6 +233,10 @@ func sendEncryptedPublicKey(
 	return nil
 }
 
+/**
+ * description:
+ *	The driver function for the program
+ */
 func main() {
 	keyStorage := NewKeyStorage()
 
