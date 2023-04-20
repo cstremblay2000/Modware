@@ -69,6 +69,17 @@ type KeyServerToModwareClient struct {
 	SigKS     []byte
 }
 
+/** 
+ * description
+ *	the struct sent to the KeyServer by
+ *	the ModwareClient to request a public key
+ * 	of a ModwareServer
+ */
+ type ModwareClientToKeyServer struct {
+	Ip string
+	Mac string
+ }
+
 /**
  * description:
  *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
