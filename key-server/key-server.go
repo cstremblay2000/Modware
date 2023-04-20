@@ -1,7 +1,7 @@
 /**
  * file:		client.go
  * author:		Mohammad Eshan <me3031@rit.edu>
-  *				Chris Tremblay <cst1465@rit.edu>
+ *				Chris Tremblay <cst1465@rit.edu>
  * language: 	Go
  * date:		4/19/2023, National Garlic Day!
  * description
@@ -24,7 +24,7 @@ const (
 	keyDir       = "keys"
 	keyExtension = ".pem"
 	HOST         = "localhost"
-	PORT         = "5020"
+	PORT         = "5023"
 	TYPE         = "tcp"
 )
 

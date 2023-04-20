@@ -29,6 +29,8 @@ const (
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
 	MAC = "MAC"
+	KEYSERVER_HOST = "127.0.0.1"
+	KEYSERVER_PORT = "5023"
 )
 
 var (
@@ -225,7 +227,7 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 
 	// connect to key server and send request for public key of server
 	fmt.Println( "connecting to:", modwareServerConn.RemoteAddr() )
-	keyServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5022" )
+	keyServerAddr, err := net.ResolveTCPAddr( TYPE, KEYSERVER_HOST + ":"+ KEYSERVER_PORT )
 	if( err != nil ) {
 		fmt.Println( "Error Resolving TCP Addr", err )
 		return err
@@ -358,6 +360,18 @@ func handleRequest(conn net.Conn) {
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", modwareServerAddr, err )
 		return
+	}
+
+	// check if host is known
+	if( true ) {
+		fmt.Println( "ModwareServer not known, beginning verification process")
+		err = verifyModwareServer( modwareServerConn )
+		if( err != nil ) {
+			fmt.Println( "error authentication ModwareServer", err )
+			return
+		} else {
+			fmt.Println( "successfully verified ModwareServer")
+		}
 	}
 
 	// perform attestation with challenge

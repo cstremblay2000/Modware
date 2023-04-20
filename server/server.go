@@ -25,6 +25,8 @@ const (
 	PORT = "5021"
 	TYPE = "tcp"
 	MAC  = "MAC"
+	KEYSERVER_HOST = "127.0.0.1"
+	KEYSERVER_PORT = "5023"
 )
 
 var (
@@ -133,9 +135,10 @@ func recieveModbusRequest( modwareClientConn net.Conn, clientPublicKey rsa.Publi
  func forwardModbusRequest( conn net.Conn, request []byte ) ( []byte, error ) {
 	_, err := conn.Write( request )
 	if( err != nil ) {
-		fmt.Printf( "failed to get modbus request %v\n", err )
+		fmt.Printf( "failed to send modbus request %v\n", err )
 		return nil, err 
 	}
+	fmt.Println( "sent modbus request" )
 
 	// recieve the encapsulated request
 	buffer := make([]byte, 1024)
@@ -145,6 +148,7 @@ func recieveModbusRequest( modwareClientConn net.Conn, clientPublicKey rsa.Publi
 		return nil, err
 	}
 	mbResponse := buffer[:bytesRead]
+	fmt.Println( "recieved modbus response" )
 	return mbResponse, nil
 }
 
@@ -177,12 +181,14 @@ func forwardModbusResponse( modwareClientConn net.Conn, clientPublicKey rsa.Publ
 	// encode packet into byte array
 	bytePacket, err := EncapsulatedModbusPacketToBytes( packet )
 	if( err != nil ) {
+		fmt.Println( "Error encoding struct to bytes", err )
 		return err
 	}
 
 	// encrypt
 	enc_packet, err := RsaEncrypt( clientPublicKey, bytePacket )
 	if( err != nil ){
+		fmt.Println( "error encrypting encapsulated modbus packet", err )
 		return err
 	}
 	fmt.Println( "Encrypted packet", enc_packet )
@@ -190,7 +196,8 @@ func forwardModbusResponse( modwareClientConn net.Conn, clientPublicKey rsa.Publ
 	// send encrypted packet
 	_, err = modwareClientConn.Write( enc_packet )
 	if( err != nil ) {
-			return err
+		fmt.Println( "Error sending encrypted packet to ModwareClient", err )
+		return err
 	}
  	fmt.Println( "sent packet" )
 	return nil
@@ -217,7 +224,11 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
     fmt.Println("IP address:", clientIP)
 
 	// get public key of client
-	clientPublicKey, err := LoadPublicKey( clientIP )
+	clientPublicKey, err := LoadPublicKey( "../client/client.public" )
+	if( err != nil ) {
+		fmt.Println( "error getting ModwareClient public key", err )
+		return err
+	}
 	fmt.Println( "Get public key for client", clientIP )
 
 	// attest the challenge
@@ -241,13 +252,34 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
 
 	// forward the request to the server device and get response
 	fmt.Println( "Beginning forwarding request")
-	mbResponse, err := forwardModbusRequest( conn, mbRequest )
+	serverAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:502" )
+	if( err != nil ) {
+		fmt.Println( "Error Resolving TCP Addr", err )
+		return err
+	}
+	fmt.Println( "dialed server successfully")
+	serverConn, err := net.DialTCP( TYPE, nil, serverAddr )
+	if( err != nil ) {
+		fmt.Println( "Error Dialing Addr", serverAddr, err )
+		return err
+	}
+	fmt.Println( "connected to server succesfully" )
+	mbResponse, err := forwardModbusRequest( serverConn, mbRequest )
 	if( err != nil ) {
 		fmt.Println( "error recieving modbus request" )
 		return err
 	}
 	fmt.Println( mbResponse )
 	fmt.Println( "Successfully forward request\n")
+
+	// forward response back to client
+	fmt.Println( "forwarding response back to client")
+	err = forwardModbusResponse( conn, clientPublicKey, chall, mbResponse )
+	if err != nil {
+		fmt.Println( "error forwarding response", err )
+		return err
+	}
+	fmt.Println( "forwarded response back to client successfully")
 
 	return nil
 }
