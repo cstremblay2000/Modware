@@ -49,6 +49,7 @@ func printLog(msg string) {
 	fmt.Println("[key-server]", msg)
 }
 
+<<<<<<< HEAD
 /*
 func sendEncryptedResponse( 
 		conn net.Conn, 
@@ -58,26 +59,71 @@ func sendEncryptedResponse(
 		pubKeyClient *rsa.PublicKey,
 	) error {
 	// generate unique challenge for ModwareServer to sign
+=======
+func LoadPublicKey(pubKeyPath string) (rsa.PublicKey, error) {
+	pubKeyData, err := ioutil.ReadFile(pubKeyPath)
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	block, _ := pem.Decode(pubKeyData)
+	if block == nil {
+		return rsa.PublicKey{}, errors.New("failed to decode public key PEM block")
+	}
+	if block.Type != "PUBLIC KEY" {
+		return rsa.PublicKey{}, errors.New("unsupported public key type")
+	}
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+
+	return *pubKey.(*rsa.PublicKey), nil
+}
+
+func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
+	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	pubKey, ok := keyStorage.GetKey(ip)
+	if !ok {
+		log.Printf("No public key found for IP: %s\n", ip)
+		return fmt.Errorf("no public key found for IP: %s", ip)
+	}
+
+>>>>>>> c9a5dc625812fbfd0cbbd4c98d726604b40359ed
 	challenge, err := MakeChallenge()
 	if err != nil {
 		log.Printf("Error making challenge: %v", err)
 		return err
 	}
 
+<<<<<<< HEAD
 	// have the stored key for the ModwareServer sign the challenge
 	sigChall, err := RsaSign(privKeyServer, []byte(challenge))
+=======
+	encryptedChallenge, err := RsaEncrypt(*pubKey, []byte(challenge))
+>>>>>>> c9a5dc625812fbfd0cbbd4c98d726604b40359ed
 	if err != nil {
-		log.Printf("Error signing challenge: %v", err)
+		log.Printf("Error encrypting challenge: %v", err)
 		return err
 	}
 
+<<<<<<< HEAD
 	// have the KeyServer sign the ModwareServer challenge signature
 	sigKS, err := RsaSign(privKeyServer, sigChall)
+=======
+	encPacket := EncryptedPacket{
+		Challenge: encryptedChallenge,
+		Pmc:       *pubKey,
+	}
+
+	encPacketBytes, err := encryptedPacketToBytes(encPacket)
+>>>>>>> c9a5dc625812fbfd0cbbd4c98d726604b40359ed
 	if err != nil {
-		log.Printf("Error signing sigChall: %v", err)
+		log.Printf("Error encoding encrypted packet: %v", err)
 		return err
 	}
 
+<<<<<<< HEAD
 	// create packet to send to ModwareClient
 	dataToSend := KeyServerToModwareClient {
 		PublicKey: *pubKeyModwareServer,
@@ -137,18 +183,44 @@ func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
 	err = sendEncryptedPublicKey(conn, pubKeyModwareServer, ip, privKeyServer, pubKeyClient)
 	if err != nil {
 		log.Printf("Error sending encrypted public key: %v", err)
+=======
+	_, err = conn.Write(encPacketBytes)
+	if err != nil {
+		log.Printf("Error sending encrypted packet: %v", err)
+>>>>>>> c9a5dc625812fbfd0cbbd4c98d726604b40359ed
 		return err
 	}
 
+	log.Printf("Sent encrypted challenge and public key for IP: %s\n", ip)
 	return nil
 }
 
 func handleRequest(conn net.Conn, keyStorage *KeyStorage) {
 	defer conn.Close()
 
-	err := givePublicKey(conn, keyStorage)
+	buf := make([]byte, 1024)
+
+	reqLen, err := conn.Read(buf)
 	if err != nil {
-		log.Printf("Error giving public key: %v", err)
+		log.Printf("Error reading from connection: %v", err)
+		return
+	}
+
+	request := string(buf[:reqLen])
+
+	switch request {
+
+	case "GIVEPUBKEY":
+		err = givePublicKey(conn, keyStorage)
+	case "SENDENC":
+		// Add the required parameters for sendEncryptedResponse
+		err = sendEncryptedResponse(conn, pubKeyModwareServer, ip, privKeyServer, pubKeyClient)
+	default:
+		err = fmt.Errorf("unknown request")
+	}
+
+	if err != nil {
+		log.Printf("Error handling request '%s': %v", request, err)
 	}
 }
 

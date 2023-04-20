@@ -2,18 +2,18 @@ package main
 
 import (
 	"crypto"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/hmac"
 
 	"math"
 	"math/big"
 
-	"io/ioutil"
 	"errors"
+	"io/ioutil"
 
 	"bytes"
 	"encoding/gob"
@@ -26,7 +26,33 @@ import (
  */
 type EncapsulatedModbusPacket struct {
 	MbPacket []byte
-	Hmac []byte
+	Hmac     []byte
+}
+
+type EncryptedPacket struct {
+	Challenge []byte
+	Pmc       rsa.PublicKey
+}
+
+func encryptedPacketToBytes(packetStruct EncryptedPacket) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	enc := gob.NewEncoder(buf)
+	err := enc.Encode(packetStruct)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeEncryptedPacketFromBytes(b []byte) (*EncryptedPacket, error) {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	ep := &EncryptedPacket{}
+	err := dec.Decode(ep)
+	if err != nil {
+		return nil, err
+	}
+	return ep, nil
 }
 
 /**
@@ -51,33 +77,33 @@ type KeyServerToModwareClient struct {
  * returns:
  *	the gob encoded byte array
  */
-func EncapsulatedModbusPacketToBytes( packetStruct EncapsulatedModbusPacket ) ( []byte, error ) {
+func EncapsulatedModbusPacketToBytes(packetStruct EncapsulatedModbusPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-    enc := gob.NewEncoder(buf)
-    err := enc.Encode(packetStruct)
-    if err != nil {
-        return nil, err
-    }
-    return buf.Bytes(), nil
+	enc := gob.NewEncoder(buf)
+	err := enc.Encode(packetStruct)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 /**
  * description:
- *	Take bytes and decode it to EncapsulatedModbusPacket struct 
+ *	Take bytes and decode it to EncapsulatedModbusPacket struct
  * parameteres:
  * 	bytes -> the struct
  * returns:
  *	the EncapsulatedModbusPacket struct
  */
 func DecodeEncapsulatedModbusPacketFromBytes(b []byte) (*EncapsulatedModbusPacket, error) {
-    buf := bytes.NewBuffer(b)
-    dec := gob.NewDecoder(buf)
-    em := &EncapsulatedModbusPacket{}
-    err := dec.Decode(em)
-    if err != nil {
-        return nil, err
-    }
-    return em, nil
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	em := &EncapsulatedModbusPacket{}
+	err := dec.Decode(em)
+	if err != nil {
+		return nil, err
+	}
+	return em, nil
 }
 
 /**
@@ -127,7 +153,7 @@ func KeyServerToModwareClientFromBytes(b []byte) (*KeyServerToModwareClient, err
  * 	The public key, private key, error condition
  */
 
- func LoadKeys(pubKeyFile, privateKeyFile string) (rsa.PublicKey, *rsa.PrivateKey, error) {
+func LoadKeys(pubKeyFile, privateKeyFile string) (rsa.PublicKey, *rsa.PrivateKey, error) {
 	pubKeyData, err := ioutil.ReadFile(pubKeyFile)
 	if err != nil {
 		return rsa.PublicKey{}, nil, err
@@ -203,7 +229,7 @@ func KeyServerToModwareClientFromBytes(b []byte) (*KeyServerToModwareClient, err
  * returns:
  * 	The ciphertext
  */
- func RsaEncrypt(pubKey rsa.PublicKey, plaintext []byte) ([]byte, error) {
+func RsaEncrypt(pubKey rsa.PublicKey, plaintext []byte) ([]byte, error) {
 	return rsa.EncryptOAEP(
 		sha256.New(),
 		rand.Reader,
@@ -242,7 +268,7 @@ func RsaDecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
  * 	The signature
  */
 func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
-	hashed := sha256.Sum256( message )
+	hashed := sha256.Sum256(message)
 	return rsa.SignPSS(
 		rand.Reader,
 		privKey,
@@ -256,13 +282,13 @@ func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
  * description:
  *	Verify a message with resources public key
  * parameters:
- *	pubKey -> public key of the resource to talk to 
+ *	pubKey -> public key of the resource to talk to
  *	message -> the message that was signed
  * 	signature -> the signature of the message
  * returns:
  * 	nil if nothing bad happened
  */
- func RsaVerify(pubKey rsa.PublicKey, message []byte, signature []byte) error {
+func RsaVerify(pubKey rsa.PublicKey, message []byte, signature []byte) error {
 	hashed := sha256.Sum256(message)
 	return rsa.VerifyPSS(
 		&pubKey,
@@ -282,9 +308,9 @@ func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
  * returns:
  *	the HMAC with the given key and message
  */
-func HMAC( key, message []byte ) ( []byte ) {
+func HMAC(key, message []byte) []byte {
 	h := hmac.New(sha256.New, key)
-    h.Write(message)
+	h.Write(message)
 
 	// Get the HMAC as a byte slice
 	return h.Sum(nil)
@@ -298,19 +324,19 @@ func HMAC( key, message []byte ) ( []byte ) {
  *	true -> if macs are same
  *	false -> otherwise
  */
-func SameHMAC( mac1, mac2 []byte ) bool {
-	return hmac.Equal( mac1, mac2 )
+func SameHMAC(mac1, mac2 []byte) bool {
+	return hmac.Equal(mac1, mac2)
 }
 
 /**
  * description
  * 	creates a unique challenge
  * returns:
- *	The challenge 
+ *	The challenge
  */
 func MakeChallenge() (string, error) {
-	bChall, err := rand.Int( rand.Reader, big.NewInt(math.MaxInt64) )
-	if( err != nil ) {
+	bChall, err := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+	if err != nil {
 		return "", err
 	}
 	return bChall.String(), nil
