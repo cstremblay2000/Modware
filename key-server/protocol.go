@@ -156,6 +156,43 @@ func KeyServerToModwareClientFromBytes(b []byte) (*KeyServerToModwareClient, err
 
 /**
  * description:
+ *	Take an the ModwareClientToKeyServer struct and convert it to bytes
+ * parameteres:
+ * 	packetStruct -> the struct
+ * returns:
+ *	the gob encoded byte array
+ */
+ func ModwareClientToKeyServerToBytes( packetStruct ModwareClientToKeyServer ) ( []byte, error ) {
+	buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    err := enc.Encode(packetStruct)
+    if err != nil {
+        return nil, err
+    }
+    return buf.Bytes(), nil
+}
+
+/**
+ * description:
+ *	Take bytes and decode it to ModwareClientToKeyServer struct 
+ * parameteres:
+ * 	bytes -> the struct
+ * returns:
+ *	the KeyServerToModwareClient struct
+ */
+func ModwareClientToKeyServerFromBytes(b []byte) (*ModwareClientToKeyServer, error) {
+    buf := bytes.NewBuffer(b)
+    dec := gob.NewDecoder(buf)
+    em := &ModwareClientToKeyServer{}
+    err := dec.Decode(em)
+    if err != nil {
+        return nil, err
+    }
+    return em, nil
+}
+
+/**
+ * description:
  * 	Loads public key and private key from a file
  * parameters:
  * 	pubKeyPath -> the path to the public key file

@@ -11,13 +11,10 @@
 package main
 
 import (
-	//"crypto/rsa"
+	"crypto/rsa"
 	"fmt"
 	"log"
 	"net"
-	//"os"
-	//"path/filepath"
-	//"strings"
 )
 
 const (
@@ -27,6 +24,13 @@ const (
 	HOST         	= "localhost"
 	PORT         	= "5023"
 	TYPE         	= "tcp"
+	PUB_FP 			= "./key-server.public"
+	PRIV_FP			= "./key-server.private"
+)
+
+var (
+	pubKey rsa.PublicKey
+	privKey *rsa.PrivateKey
 )
 
 /**
@@ -223,7 +227,7 @@ func handleRequest(conn net.Conn) {
 		log.Printf("Error reading from connection: %v", err)
 		return
 	}
-	request := string(buf[:reqLen])
+	request := buf[:reqLen]
 
 	// decode request to get ModwareServer IP and MAC
 	decodedRequest, err := ModwareClientToKeyServerFromBytes( request )
@@ -241,8 +245,16 @@ func handleRequest(conn net.Conn) {
 		return
 	}
 
+	// get modware client IP
+	modwareClientAddr := conn.RemoteAddr().(*net.TCPAddr)
+	modwareClientIP := modwareClientAddr.IP.String()
+
 	// send packet to ModwareClient
-	err = sendEncryptedPublicKey( conn, decodedRequest.Ip, chall )
+	err = sendEncryptedPublicKey( conn, // socket to ModwareClient
+		decodedRequest.Ip, // ModwareServerIP
+		modwareClientIP,
+		chall,
+ 	)
 	if err != nil {
 		fmt.Println( "error sending packet to client", err )
 		conn.Close()
@@ -250,7 +262,11 @@ func handleRequest(conn net.Conn) {
 	}
 
 	// send packet to ModwareServer
-
+	err = givePublicKey(
+		decodedRequest.Ip, 
+		modwareClientIP, 
+		chall,
+	)
 	if err != nil {
 		log.Printf("Error handling request '%s': %v", request, err)
 	}
@@ -262,6 +278,15 @@ func handleRequest(conn net.Conn) {
  *	The driver function for the program
  */
 func main() {
+	// load keyserver keys
+	var err error
+	pubKey, privKey, err = LoadKeys( PUB_FP, PRIV_FP )
+	if err != nil {
+		fmt.Println( "Error loading KeyServer public and private keys", err )
+		return 
+	}
+
+	// start up server socket and listen for connections
 	listener, err := net.Listen(TYPE, HOST+":"+PORT)
 	if err != nil {
 		log.Fatalf("Error listening on %s:%s: %v", HOST, PORT, err)
