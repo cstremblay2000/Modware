@@ -266,7 +266,7 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 		fmt.Println( "error recieving response from KeyServer", err )
 		return err 
 	}
-	encryptKeyServerPacket := buffer[:bytesRead] 
+	encodedKeyServerPacket := buffer[:bytesRead] 
 
 	// wait for message from ModwareServer
 	modwareServerBuffer := make( []byte, 1024 )
@@ -279,14 +279,8 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 
 	// decrypt packet from KeyServer
 	keyServerPublicKey, err := LoadPublicKey( "../key-server.public" )
-
 	if( err != nil ) {
 		fmt.Println( "error loading key server key", err )
-		return err
-	}
-	encodedKeyServerPacket, err := RsaDecrypt( privKey, encryptKeyServerPacket )
-	if( err != nil ) {
-		fmt.Println( "error decrypting KeyServer packet",err )
 		return err
 	}
 
@@ -295,6 +289,13 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	if( err != nil ) {
 		fmt.Println( "error decoding packet to struct from KeyServer", err )
 		return err
+	}
+
+	// decrypt challenge from KeyServer packet
+	chall, err := RsaDecrypt( privKey, decodedKeyServerPacket.EncryptedChallenge )
+	if err != nil {
+		fmt.Println( "Error decrypting challenge from key server:", err )
+		return err 
 	}
 
 	// verify KeyServer signature for the signed challenge
@@ -307,13 +308,25 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 		return err
 	}
 
-	// decrypt packet from ModwareServer
-	modwareServerKey, err := LoadPublicKey( "../server/sever.public" )
+	// decrypt signature  from ModwareServer
+	recievedSignature, err := RsaDecrypt(
+	// Verify signature from ModwareServer
+	err = RsaVerify( modwareServerKey, 
+		[]byte(chall), 
+		recievedSignature,
+	)
 	if( err != nil ) {
-		fmt.Println( "error loading public key", err )
+		fmt.Println( "error verifying ModwareServer expected signature", err )
 		return err
 	}
-	recievedSignature, err := RsaDecrypt( privKey, encryptModwareServerPacket )
+	
+
+	// check if expected signature from ModwareServer
+	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.ModwareServerSignedChallenge ) ) {
+		return nil
+	} else {
+		return errors.New( "signatures were not the same" )
+	} privKey, encryptModwareServerPacket )
 	if( err != nil ) {
 		fmt.Println( "error decrypting ModwareServer signature", err )
 		return err
@@ -321,7 +334,7 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 
 	// Verify signature from ModwareServer
 	err = RsaVerify( modwareServerKey, 
-		[]byte(decodedKeyServerPacket.Challenge), 
+		[]byte(chall), 
 		recievedSignature,
 	)
 	if( err != nil ) {
