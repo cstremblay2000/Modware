@@ -15,10 +15,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 )
 
 const (
-	keyDir       	= "./keys/"
+	keyDir       	= "/keys/"
 	pubKeyExtension = ".public"
 	privKeyExtension= ".private"
 	HOST         	= "127.0.0.1"
@@ -32,6 +33,7 @@ var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
 	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
+	workingDir = ""
 )
 
 /**
@@ -144,8 +146,8 @@ func sendEncryptedPublicKey(
 ) error {
 	// get ModwareServer public key for encryption
 	modwareServerPubKey, modwareServerPrivKey, err := LoadKeys(
-		keyDir + modwareServerIP + pubKeyExtension,
-		keyDir + modwareServerIP + privKeyExtension,
+		workingDir + keyDir + modwareServerIP + pubKeyExtension,
+		workingDir + keyDir + modwareServerIP + privKeyExtension,
 	)
 	if( err != nil ) {
 		fmt.Println( "error getting ModwareServer public and private keys", err )
@@ -154,8 +156,8 @@ func sendEncryptedPublicKey(
 
 	// get ModwareClient public key to give to ModwareServer
 	modwareClientPubKey, _, err := LoadKeys (
-		keyDir + modwareClientIP + pubKeyExtension,
-		keyDir + modwareClientIP + privKeyExtension,
+		workingDir + keyDir + modwareClientIP + pubKeyExtension,
+		workingDir + keyDir + modwareClientIP + privKeyExtension,
 	)
 	if( err != nil ) {
 		fmt.Println( "error getting ModwareClient public and private keys", err )
@@ -288,6 +290,13 @@ func main() {
 		fmt.Println( "Error loading KeyServer public and private keys", err )
 		return 
 	}
+
+	// get working directory
+	workingDir, err = os.Getwd()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+	fmt.Println( workingDir )
 
 	// start up server socket and listen for connections
 	listener, err := net.Listen(TYPE, HOST+":"+PORT)

@@ -430,7 +430,7 @@ func handleRequest(conn net.Conn) {
 func main() {
 	var err error
 
-		// get public and private keys
+	// get public and private keys
 	pubKey, privKey, err = LoadKeys( FILE_PUB, FILE_PRIV )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
