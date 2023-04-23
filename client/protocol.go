@@ -61,7 +61,7 @@ type VerifyHostIpMac struct {
  */
 type VerifyHostExpectedResults struct {
 	ModwareServerPublicKey rsa.PublicKey
-	Challenge string
+	EncryptedChallenge []byte
 	ModwareServerSignedChallenge []byte
 	KeyServerSignedSignature []byte
 }

@@ -309,9 +309,14 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	}
 
 	// decrypt signature  from ModwareServer
-	recievedSignature, err := RsaDecrypt(
+	recievedSignature, err := RsaDecrypt( privKey, encryptModwareServerPacket )
+	if( err != nil ) {
+		fmt.Println( "Error decrypting ModwareServer signature:", err )
+		return err 
+	}
+
 	// Verify signature from ModwareServer
-	err = RsaVerify( modwareServerKey, 
+	err = RsaVerify( decodedKeyServerPacket.ModwareServerPublicKey, 
 		[]byte(chall), 
 		recievedSignature,
 	)
@@ -326,14 +331,14 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 		return nil
 	} else {
 		return errors.New( "signatures were not the same" )
-	} privKey, encryptModwareServerPacket )
+	} 
 	if( err != nil ) {
 		fmt.Println( "error decrypting ModwareServer signature", err )
 		return err
 	}
 
 	// Verify signature from ModwareServer
-	err = RsaVerify( modwareServerKey, 
+	err = RsaVerify( decodedKeyServerPacket.ModwareServerPublicKey, 
 		[]byte(chall), 
 		recievedSignature,
 	)
