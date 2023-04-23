@@ -21,17 +21,18 @@ import (
 
 // Define Variables
 const (
-	HOST = "localhost"
-	PORT = "5021"
+	HOST = "127.0.0.3"
+	PORT = "5020"
 	TYPE = "tcp"
 	MAC  = "MAC"
 	KEYSERVER_HOST = "127.0.0.1"
-	KEYSERVER_PORT = "5023"
+	KEYSERVER_PORT = "5020"
 )
 
 var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
+	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
 )
 
 /**
@@ -258,7 +259,7 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
 		return err
 	}
 	fmt.Println( "dialed server successfully")
-	serverConn, err := net.DialTCP( TYPE, nil, serverAddr )
+	serverConn, err := net.DialTCP( TYPE, LADDR, serverAddr )
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", serverAddr, err )
 		return err
@@ -285,8 +286,24 @@ func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
 }
 
 func verifyHost( modwareClientConn net.Conn ) error {
+	// get mac addr
+    iface, err := net.InterfaceByName("lo")
+    if err != nil {
+        fmt.Println(err)
+        return err 
+    }
+	macAddr := iface.HardwareAddr
+
+	fmt.Println( "sending MAC addr", macAddr )
+	_, err = modwareClientConn.Write( []byte("00:00:00:00:00:00") )
+	if err != nil {
+		fmt.Println( "error sending mac to ModwareClient")
+		return err
+	}
+	fmt.Println( "mac addr sent" )
+
 	// start up new server socket 
-	listen, err := net.Listen(TYPE, HOST+":"+"5022")
+	listen, err := net.Listen(TYPE, HOST+":"+"5021")
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
@@ -294,6 +311,7 @@ func verifyHost( modwareClientConn net.Conn ) error {
 
 	// listen for requests incoming from KeyServer
 	defer listen.Close()
+	fmt.Println( "Listening for KeyServer connection")
 	keyServerConn, err := listen.Accept()
 	if err != nil {
 		log.Fatal(err)
@@ -355,12 +373,13 @@ func handleRequest(conn net.Conn) {
 
 	// verify host logic 
 	if( string(recvMsg) == MAC ) {
+		fmt.Println( "beginning to sent MAC address" )
 		err = verifyHost( conn )
 		if( err != nil ) {
 			fmt.Println( "Error verifying host", err )
+			conn.Close()
+			return
 		}
-		conn.Close()
-		return
 	}
 	
 	// continute with verified communication

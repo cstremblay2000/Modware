@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	HOST = "127.0.0.1"
+	HOST = "127.0.0.2"
 	PORT = "5020"
 	TYPE = "tcp"
 	TIMEOUT = 5 * time.Second 
@@ -30,7 +30,7 @@ const (
 	FILE_PUB = "./client.public"
 	MAC = "MAC"
 	KEYSERVER_HOST = "127.0.0.1"
-	KEYSERVER_PORT = "5023"
+	KEYSERVER_PORT = "5020"
 )
 
 var (
@@ -38,6 +38,7 @@ var (
 	privKey *rsa.PrivateKey
 	serverPub rsa.PublicKey
 	serverPriv *rsa.PrivateKey
+	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
 )
 
 /**
@@ -208,6 +209,7 @@ func forwardModbusResponse( conn net.Conn, response []byte ) error {
  *	negotiate with the KeyServer to start communicating with it
  */
 func verifyModwareServer( modwareServerConn net.Conn ) error {
+	buffer := make( []byte, 1024 )
 	// send MAC address request to ModwareServer
 	_, err := modwareServerConn.Write( []byte( MAC ) )
 	if( err != nil ) {
@@ -216,23 +218,23 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	}
 
 	// get mac addr from ModwareServer
-	buffer := make( []byte, 1024 )
+	fmt.Println( "waiting for MacAddr" )
 	bytesRead, err := modwareServerConn.Read( buffer )
 	if( err != nil ) {
 		fmt.Println( "error recieving MAC address from ModwareServer", err )
 		return err
 	}
-	//macAddrByte := buffer[:bytesRead]
-	macAddr := string( buffer )
+	macAddr := string( buffer[:bytesRead] )
+	fmt.Println( "recieved mac addr", macAddr )
 
 	// connect to key server and send request for public key of server
-	fmt.Println( "connecting to:", modwareServerConn.RemoteAddr() )
+	fmt.Println( "connecting to:", KEYSERVER_HOST )
 	keyServerAddr, err := net.ResolveTCPAddr( TYPE, KEYSERVER_HOST + ":"+ KEYSERVER_PORT )
 	if( err != nil ) {
 		fmt.Println( "Error Resolving TCP Addr", err )
 		return err
 	}
-	keyServerConn, err := net.DialTCP( TYPE, nil, keyServerAddr )
+	keyServerConn, err := net.DialTCP( TYPE, LADDR, keyServerAddr )
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", keyServerAddr, err )
 		return err
@@ -349,14 +351,14 @@ func handleRequest(conn net.Conn) {
 
 	// open connection to ModwareServer and send
 	fmt.Println( "connecting to:", conn.RemoteAddr() )
-	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5021" )
+	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.3:5020" )
 	if( err != nil ) {
 		fmt.Println( "Error Resolving TCP Addr", err )
 		return
 	}
 
 	//modwareServerConn, err := net.DialTCP( TYPE, nil, conn.RemoteAddr().(*net.TCPAddr) )
-	modwareServerConn, err := net.DialTCP( TYPE, nil, modwareServerAddr )
+	modwareServerConn, err := net.DialTCP( TYPE, LADDR, modwareServerAddr )
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", modwareServerAddr, err )
 		return

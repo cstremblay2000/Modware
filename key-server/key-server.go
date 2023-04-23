@@ -21,8 +21,8 @@ const (
 	keyDir       	= "./keys/"
 	pubKeyExtension = ".public"
 	privKeyExtension= ".private"
-	HOST         	= "localhost"
-	PORT         	= "5023"
+	HOST         	= "127.0.0.1"
+	PORT         	= "5020"
 	TYPE         	= "tcp"
 	PUB_FP 			= "./key-server.public"
 	PRIV_FP			= "./key-server.private"
@@ -31,6 +31,7 @@ const (
 var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
+	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
 )
 
 /**
@@ -92,12 +93,12 @@ func givePublicKey( modwareServerIP string, modwareClientIP string, chall string
 	}
 
 	// connect to ModwareServer
-	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, modwareServerIP + ":5022" )
+	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, modwareServerIP + ":5021" )
 	if err != nil {
 		fmt.Println( "error resolving address for ModwareServer", err )
 		return err
 	}
-	modwareServerConn, err := net.DialTCP( TYPE, nil, modwareServerAddr )
+	modwareServerConn, err := net.DialTCP( TYPE, LADDR, modwareServerAddr )
 	if err != nil {
 		fmt.Println( "error dialing ModwareServer", err )
 		return err
@@ -217,6 +218,7 @@ func sendEncryptedPublicKey(
 *	keyStorage -> the in-memory ip to public key storage
  */
 func handleRequest(conn net.Conn) {
+	fmt.Println( "accepted request from", conn )
 	defer conn.Close()
 
 	buf := make([]byte, 1024)
@@ -248,6 +250,7 @@ func handleRequest(conn net.Conn) {
 	// get modware client IP
 	modwareClientAddr := conn.RemoteAddr().(*net.TCPAddr)
 	modwareClientIP := modwareClientAddr.IP.String()
+	fmt.Println( "ModwareClientIP:", modwareClientIP )
 
 	// send packet to ModwareClient
 	err = sendEncryptedPublicKey( conn, // socket to ModwareClient
