@@ -182,7 +182,7 @@ func sendEncryptedPublicKey(
 	// encrypt the bytes and send
 	encryptedChall, err := RsaEncrypt( modwareClientPubKey, []byte(chall) )
 	if err != nil {
-		log.Printf( "Error encrypting packet: %v", err )
+		log.Printf( "Error encrypting challenge: %v", err )
 		return err 
 	}
 
@@ -200,7 +200,7 @@ func sendEncryptedPublicKey(
 		log.Printf("Error encoding struct to bytes: %v", err)
 		return err
 	}
-	_, err = modwareClientConn.Write(encryptedDataToSend)
+	_, err = modwareClientConn.Write(encodedDataToSend)
 	if err != nil {
 		log.Printf("Error sending encrypted data: %v", err)
 		return err
