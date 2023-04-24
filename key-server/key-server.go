@@ -55,10 +55,10 @@ func printLog(msg string) {
  *	nil -> upon success
  *	error -> otherwise
  */
-func givePublicKey( modwareServerIP string, modwareClientIP string, chall string ) error {
+func giveModwareServerTheModwareClientPubKey( modwareServerIP string, modwareClientIP string, chall string ) error {
 	// get ModwareServer public key for encryption
 	modwareServerPubKey, err := LoadPublicKey(
-		keyDir + modwareServerIP + pubKeyExtension,
+		workingDir + keyDir + modwareServerIP + pubKeyExtension,
 	)
 	if( err != nil ) {
 		fmt.Println( "error getting ModwareServer public and private keys", err )
@@ -67,7 +67,7 @@ func givePublicKey( modwareServerIP string, modwareClientIP string, chall string
 
 	// get ModwareClient public key to give to ModwareServer
 	modwareClientPubKey, err := LoadPublicKey (
-		keyDir + modwareClientIP + pubKeyExtension,
+		workingDir + keyDir + modwareClientIP + pubKeyExtension,
 	)
 	if( err != nil ) {
 		fmt.Println( "error getting ModwareClient public and private keys", err )
@@ -138,13 +138,14 @@ func givePublicKey( modwareServerIP string, modwareClientIP string, chall string
  *	nil -> upon sucess
  *	error -> otherwise
  */
-func sendEncryptedPublicKey( 
+func giveModwareClientTheModwareServerPubKey( 
 	modwareClientConn net.Conn,
 	modwareServerIP string, 
 	modwareClientIP string,
 	chall string,
 ) error {
 	// get ModwareServer public key for encryption
+	fmt.Println( workingDir + keyDir + modwareServerIP + pubKeyExtension )
 	modwareServerPubKey, modwareServerPrivKey, err := LoadKeys(
 		workingDir + keyDir + modwareServerIP + pubKeyExtension,
 		workingDir + keyDir + modwareServerIP + privKeyExtension,
@@ -166,11 +167,12 @@ func sendEncryptedPublicKey(
 
 	// sign challenge with the stored secret key of the
 	// ModwareServer the ModwareClient is trying to talk to
-	sigChall, err := RsaSign(modwareServerPrivKey, []byte(chall))
+	sigChall, err := RsaSign(modwareServerPrivKey, []byte(chall), []byte(chall)... )
 	if err != nil {
 		log.Printf("Error signing challenge: %v", err)
 		return err
 	}
+	fmt.Println( sigChall )
 
 	// have the KeyServer sign the ModwareServer challenge signature
 	sigKS, err := RsaSign(privKey, sigChall)
@@ -248,6 +250,7 @@ func handleRequest(conn net.Conn) {
 		conn.Close() 
 		return
 	}
+	fmt.Println( "chall:", chall )
 
 	// get modware client IP
 	modwareClientAddr := conn.RemoteAddr().(*net.TCPAddr)
@@ -255,7 +258,7 @@ func handleRequest(conn net.Conn) {
 	fmt.Println( "ModwareClientIP:", modwareClientIP )
 
 	// send packet to ModwareClient
-	err = sendEncryptedPublicKey( conn, // socket to ModwareClient
+	err = giveModwareClientTheModwareServerPubKey( conn, // socket to ModwareClient
 		decodedRequest.Ip, // ModwareServerIP
 		modwareClientIP,
 		chall,
@@ -267,8 +270,8 @@ func handleRequest(conn net.Conn) {
 	}
 
 	// send packet to ModwareServer
-	err = givePublicKey(
-		decodedRequest.Ip, 
+	err = giveModwareServerTheModwareClientPubKey(
+		decodedRequest.Ip, // ModwareServer IP
 		modwareClientIP, 
 		chall,
 	)
@@ -296,7 +299,7 @@ func main() {
     if err != nil {
         fmt.Println("Error:", err)
     }
-	fmt.Println( workingDir )
+	fmt.Println( "working dir:", workingDir )
 
 	// start up server socket and listen for connections
 	listener, err := net.Listen(TYPE, HOST+":"+PORT)

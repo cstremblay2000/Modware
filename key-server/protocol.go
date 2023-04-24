@@ -11,12 +11,15 @@ import (
 
 	"math"
 	"math/big"
+	mrand "math/rand"
 
 	"errors"
 	"io/ioutil"
 
 	"bytes"
 	"encoding/gob"
+
+	"strconv"
 )
 
 /**
@@ -315,10 +318,23 @@ func RsaDecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
  * returns:
  * 	The signature
  */
-func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
-	hashed := sha256.Sum256(message)
+ func RsaSign(privKey *rsa.PrivateKey, message []byte, chall...byte ) ([]byte, error) {
+	hashed := sha256.Sum256( message )
+	if( len(chall) == 0 ){
+		return rsa.SignPSS(
+			rand.Reader,
+			privKey,
+			crypto.SHA256,
+			hashed[:],
+			nil,
+		)
+	} 
+	seed, err := strconv.Atoi( string(chall) )
+	if( err != nil ){
+		return nil, err
+	}
 	return rsa.SignPSS(
-		rand.Reader,
+		mrand.New(mrand.NewSource(int64(seed))),
 		privKey,
 		crypto.SHA256,
 		hashed[:],

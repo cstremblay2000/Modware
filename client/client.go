@@ -31,6 +31,7 @@ const (
 	MAC = "MAC"
 	KEYSERVER_HOST = "127.0.0.1"
 	KEYSERVER_PORT = "5020"
+	KEYSERVER_KEY  = "./key-server.public"
 )
 
 var (
@@ -209,7 +210,7 @@ func forwardModbusResponse( conn net.Conn, response []byte ) error {
  *	negotiate with the KeyServer to start communicating with it
  */
 func verifyModwareServer( modwareServerConn net.Conn ) error {
-	buffer := make( []byte, 1024 )
+	buffer := make( []byte, 3072 )
 	// send MAC address request to ModwareServer
 	_, err := modwareServerConn.Write( []byte( MAC ) )
 	if( err != nil ) {
@@ -269,87 +270,61 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	encodedKeyServerPacket := buffer[:bytesRead] 
 
 	// wait for message from ModwareServer
-	modwareServerBuffer := make( []byte, 1024 )
-	bytesRead, err = modwareServerConn.Read( modwareServerBuffer )
+	modwareServerBuffer := make( []byte, 3072 )
+	fmt.Println( bytesRead )
+	bytesRead, err = modwareServerConn.Read( modwareServerBuffer ) 
 	if( err != nil ) {
 		fmt.Println( "error recieving response ModwareServer", err )
 		return err
 	}
-	encryptModwareServerPacket := modwareServerBuffer[:bytesRead]
+	recievedSignature := modwareServerBuffer[:bytesRead]
 
 	// decrypt packet from KeyServer
-	keyServerPublicKey, err := LoadPublicKey( "../key-server.public" )
+	keyServerPublicKey, err := LoadPublicKey( KEYSERVER_KEY )
 	if( err != nil ) {
 		fmt.Println( "error loading key server key", err )
 		return err
 	}
 
 	// decode packet from KeyServer
-	decodedKeyServerPacket, err := VerifyHostExpectedResultsFromBytes( encodedKeyServerPacket )
+	decodedKeyServerPacket, err := KeyServerToModwareClientFromBytes( encodedKeyServerPacket )
 	if( err != nil ) {
 		fmt.Println( "error decoding packet to struct from KeyServer", err )
 		return err
 	}
 
 	// decrypt challenge from KeyServer packet
-	chall, err := RsaDecrypt( privKey, decodedKeyServerPacket.EncryptedChallenge )
+	chall, err := RsaDecrypt( privKey, decodedKeyServerPacket.Chall )
 	if err != nil {
 		fmt.Println( "Error decrypting challenge from key server:", err )
 		return err 
-	}
+	} 
+	fmt.Println( "chall:", string(chall))
 
 	// verify KeyServer signature for the signed challenge
 	err = RsaVerify( keyServerPublicKey, 
-		decodedKeyServerPacket.ModwareServerSignedChallenge,
-		decodedKeyServerPacket.KeyServerSignedSignature,
+		decodedKeyServerPacket.SigChall,
+		decodedKeyServerPacket.SigKS,
 	)
 	if( err != nil ) {
 		fmt.Println( "error verifying KeyServer signed signature", err )
 		return err
 	}
 
-	// decrypt signature  from ModwareServer
-	recievedSignature, err := RsaDecrypt( privKey, encryptModwareServerPacket )
-	if( err != nil ) {
-		fmt.Println( "Error decrypting ModwareServer signature:", err )
-		return err 
-	}
-
 	// Verify signature from ModwareServer
-	err = RsaVerify( decodedKeyServerPacket.ModwareServerPublicKey, 
-		[]byte(chall), 
+	err = RsaVerify( decodedKeyServerPacket.PublicKey, 
+		chall, 
 		recievedSignature,
 	)
 	if( err != nil ) {
 		fmt.Println( "error verifying ModwareServer expected signature", err )
 		return err
 	}
-	
 
-	// check if expected signature from ModwareServer
-	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.ModwareServerSignedChallenge ) ) {
-		return nil
-	} else {
-		return errors.New( "signatures were not the same" )
-	} 
-	if( err != nil ) {
-		fmt.Println( "error decrypting ModwareServer signature", err )
-		return err
-	}
-
-	// Verify signature from ModwareServer
-	err = RsaVerify( decodedKeyServerPacket.ModwareServerPublicKey, 
-		[]byte(chall), 
-		recievedSignature,
-	)
-	if( err != nil ) {
-		fmt.Println( "error verifying ModwareServer expected signature", err )
-		return err
-	}
-	
-
-	// check if expected signature from ModwareServer
-	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.ModwareServerSignedChallenge ) ) {
+	// check if expected signature from ModwareServer is same are recieved
+	fmt.Println( recievedSignature ) 
+	fmt.Println( decodedKeyServerPacket.SigChall )
+	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.SigChall ) ) {
 		return nil
 	} else {
 		return errors.New( "signatures were not the same" )

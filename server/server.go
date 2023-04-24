@@ -330,14 +330,23 @@ func verifyHost( modwareClientConn net.Conn ) error {
 	data := buffer[:bytesRead]
 
 	// extract challenge and ModwareClient public key
-	packetStruct,err := DecodeVerifyHostKeyServerChallPublicKeyFromBytes( data )
+	packetStruct,err := decodeEncryptedPacketFromBytes( data )
 	if( err != nil ) {
 		fmt.Println( "Error decapsulating packet",err  )
 		return err
 	}
 
+	// decrypt the challenge
+	chall, err := RsaDecrypt( privKey, packetStruct.Challenge )
+	if err != nil {
+		fmt.Println( "Error decryptin challenge:", err )
+		return err
+	}
+	fmt.Println( "chall:", string( chall) )
+
 	// sign challenge
-	signedChall, err := RsaSign( privKey, packetStruct.Chall )
+	signedChall, err := RsaSign( privKey, chall, chall... )
+	fmt.Println( "sigchall", signedChall )
 	if( err != nil ) {
 		fmt.Println( "Error signing challenge", err )
 		return err
