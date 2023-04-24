@@ -68,6 +68,7 @@ func attestChallenge( modwareServerConn net.Conn, serverPubKey rsa.PublicKey ) (
 	if( err != nil ) {
 		return "", err
 	}
+	fmt.Println( "enc chall:", enc_chall )
 
 	// write encrypted challenge out to modware server
 	fmt.Println( "Sending Challenge" )
@@ -430,7 +431,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverPub, serverPriv, err = LoadKeys( "../dev_utils/server.public", "../dev_utils/server.private" )
+	serverPub, serverPriv, err = LoadKeys( "../server/server.public", "../server/server.private" )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)

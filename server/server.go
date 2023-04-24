@@ -49,9 +49,10 @@ var (
  */
 func attestChallenge( modwareClientConn net.Conn, modwareClientPubKey rsa.PublicKey, recvMsg []byte ) (string, error) {
 	// decrypt challenge with our private key
+	fmt.Println("recv enc chall:", recvMsg )
 	chall, err := RsaDecrypt( privKey, recvMsg )
 	if err != nil {
-		fmt.Printf("Failed to decrypt challenge: %v", err)
+		fmt.Printf("Failed to decrypt challenge: %v\n", err)
 		return "", err
 	}
 	fmt.Println( "Decrypted challenge", string(chall) )
@@ -214,7 +215,16 @@ func forwardModbusResponse( modwareClientConn net.Conn, clientPublicKey rsa.Publ
  *	error upon error
  *	nil upon success
  */
-func verifiedCommunication( conn net.Conn, recvMsg []byte ) error {
+func verifiedCommunication( conn net.Conn  ) error {
+	// read message
+	buffer := make( []byte, 1024 )
+	bytesRead, err := conn.Read( buffer )
+	if err != nil {
+		fmt.Println( "error recieving message from client:", err )
+		return err 
+	}
+	recvMsg := buffer[:bytesRead]
+	
 	// get ip of client device
 	remoteAddr := conn.RemoteAddr()
     tcpAddr, ok := remoteAddr.(*net.TCPAddr)
@@ -392,7 +402,7 @@ func handleRequest(conn net.Conn) {
 	}
 	
 	// continute with verified communication
-	err = verifiedCommunication( conn, recvMsg )
+	err = verifiedCommunication( conn )
 	if( err != nil ) {
 		fmt.Println( "Error performing secure communciation" )
 		conn.Close()
