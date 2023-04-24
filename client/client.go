@@ -32,14 +32,15 @@ const (
 	KEYSERVER_HOST = "127.0.0.1"
 	KEYSERVER_PORT = "5020"
 	KEYSERVER_KEY  = "./key-server.public"
+	KEYDIR = "/keys/"
+	PUB_EXTENSION = ".public"
 )
 
 var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
-	serverPub rsa.PublicKey
-	serverPriv *rsa.PrivateKey
 	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
+	workingDir = ""
 )
 
 /**
@@ -325,13 +326,31 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	// check if expected signature from ModwareServer is same are recieved
 	fmt.Println( recievedSignature ) 
 	fmt.Println( decodedKeyServerPacket.SigChall )
-	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.SigChall ) ) {
-		return nil
-	} else {
+	if( !bytes.Equal( recievedSignature, decodedKeyServerPacket.SigChall ) ) {
 		return errors.New( "signatures were not the same" )
 	}
+
+	// save public key
+	err = SavePublicKey( 
+		decodedKeyServerPacket.PublicKey,
+		workingDir + KEYDIR + modwareServerIP + PUB_EXTENSION,
+	)
+	if err != nil {
+		fmt.Println( "error saving public key", err )
+		return err
+	}
+
+	// done 
+	return nil
 }
 
+/**
+ * description:
+ *	facilitate verify host flows
+ * 	or verified communication flow
+ * parameters:
+ *	conn -> the connection to Modware Client device
+ */
 func handleRequest(conn net.Conn) {
 	// Handle Incoming Request(s)
 	buffer := make([]byte, 1024)
@@ -359,7 +378,8 @@ func handleRequest(conn net.Conn) {
 	}
 
 	// check if host is known
-	if( true ) {
+	_, err = os.Stat(workingDir + KEYDIR + modwareServerAddr.IP.String() + PUB_EXTENSION ) 
+	if( os.IsNotExist( err ) ) {
 		fmt.Println( "ModwareServer not known, beginning verification process")
 		err = verifyModwareServer( modwareServerConn )
 		if( err != nil ) {
@@ -368,6 +388,13 @@ func handleRequest(conn net.Conn) {
 		} else {
 			fmt.Println( "successfully verified ModwareServer")
 		}
+	}
+
+	// key should exist by this point
+	serverPub, err := LoadPublicKey( workingDir + KEYDIR + modwareServerAddr.IP.String() + PUB_EXTENSION )
+	if err != nil {
+		fmt.Printf( "Error loading ModwareServer public key for %s %v\n", modwareServerAddr.IP.String(), err )
+		return 
 	}
 
 	// perform attestation with challenge
@@ -424,14 +451,15 @@ func handleRequest(conn net.Conn) {
 func main() {
 	var err error
 
+	// get working direrctory
+	workingDir, err = os.Getwd()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+	fmt.Println( "working dir:", workingDir )
+
 	// get public and private keys
 	pubKey, privKey, err = LoadKeys( FILE_PUB, FILE_PRIV )
-	if( err != nil ) {
-		println( "Couldn't load public/private keys:", err.Error() )
-		os.Exit(1)
-	}
-
-	serverPub, serverPriv, err = LoadKeys( "../server/server.public", "../server/server.private" )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)

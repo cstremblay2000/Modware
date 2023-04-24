@@ -20,6 +20,8 @@ import (
 	"encoding/gob"
 
 	"strconv"
+
+	"os"
 )
 
 /**
@@ -290,6 +292,45 @@ func DecodeVerifyHostIpMacFromBytes(b []byte) (*VerifyHostIpMac, error) {
 		return rsa.PublicKey{}, err
 	}
 	return *pKey.(*rsa.PublicKey), nil
+}
+
+/**
+ * description:
+ *	Save a public key to a PEM encoded file
+ * parameters:
+ *	pubKey -> the public key structure we want to save
+ *	filepath -> where we want to save the key 
+ * returns:
+ * 	nil -> upon success
+ *	error -> otherwise
+ */
+func SavePublicKey( pubKey rsa.PublicKey, filepath string ) error {
+	// get bytes
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey( &pubKey )
+	if err != nil {
+		return err 
+	}
+
+	// instantiate PEM block
+	publicKeyPEM := &pem.Block {
+		Type: "RSA PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	}
+
+	// create and open file
+	file, err := os.Create( filepath )
+	if err != nil {
+		return err 
+	}
+	defer file.Close()
+
+	// write to file
+	err = pem.Encode( file, publicKeyPEM )
+	if err != nil {
+		return err 
+	}
+
+	return nil
 }
 
 /**
