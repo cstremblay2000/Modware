@@ -1,206 +1,307 @@
+/**
+ * file:		client.go
+ * author:		Mohammad Eshan <me3031@rit.edu>
+ *				Chris Tremblay <cst1465@rit.edu>
+ * language: 	Go
+ * date:		4/19/2023, National Garlic Day!
+ * description
+ * 	The KeyServer
+ */
+
 package main
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
-	"path/filepath"
-	"strings"
 )
 
 const (
-	keyDir       = "keys"
-	keyExtension = ".pem"
-	HOST         = "localhost"
-	PORT         = "5020"
-	TYPE         = "tcp"
+	keyDir       	= "/keys/"
+	pubKeyExtension = ".public"
+	privKeyExtension= ".private"
+	HOST         	= "127.0.0.1"
+	PORT         	= "5020"
+	TYPE         	= "tcp"
+	PUB_FP 			= "./key-server.public"
+	PRIV_FP			= "./key-server.private"
 )
 
-type KeyStorage struct {
-	keys map[string]*rsa.PublicKey
-}
+var (
+	pubKey rsa.PublicKey
+	privKey *rsa.PrivateKey
+	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
+	workingDir = ""
+)
 
-func NewKeyStorage() *KeyStorage {
-	return &KeyStorage{keys: make(map[string]*rsa.PublicKey)}
-}
-
-func (ks *KeyStorage) AddKey(ip string, key *rsa.PublicKey) {
-	ks.keys[ip] = key
-}
-
-func (ks *KeyStorage) GetKey(ip string) (*rsa.PublicKey, bool) {
-	key, ok := ks.keys[ip]
-	return key, ok
-}
-
+/**
+ * description:
+ *	print a log message with a key-server tag
+ */
 func printLog(msg string) {
 	fmt.Println("[key-server]", msg)
 }
 
-func LoadPublicKey(pubKeyPath string) (rsa.PublicKey, error) {
-	pubKeyData, err := ioutil.ReadFile(pubKeyPath)
-	if err != nil {
-		return rsa.PublicKey{}, err
-	}
-	block, _ := pem.Decode(pubKeyData)
-	if block == nil {
-		return rsa.PublicKey{}, errors.New("failed to decode public key PEM block")
-	}
-	if block.Type != "PUBLIC KEY" {
-		return rsa.PublicKey{}, errors.New("unsupported public key type")
-	}
-	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return rsa.PublicKey{}, err
-	}
-
-	return *pubKey.(*rsa.PublicKey), nil
-}
-
-func givePublicKey(conn net.Conn, keyStorage *KeyStorage) error {
-	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
-
-	pubKey, ok := keyStorage.GetKey(ip)
-	if !ok {
-		log.Printf("No public key found for IP: %s\n", ip)
-		return fmt.Errorf("no public key found for IP: %s", ip)
+/**
+ * description:
+ * 
+ * parameters:
+ *	modwareServerIP -> the IP address of the ModwareServer
+ *	modwareClientIP -> the IP address of the ModwareClient, for key storage
+ *	chall -> the unique challenge  
+ * returns:
+ *	nil -> upon success
+ *	error -> otherwise
+ */
+func giveModwareServerTheModwareClientPubKey( modwareServerIP string, modwareClientIP string, chall string ) error {
+	// get ModwareServer public key for encryption
+	modwareServerPubKey, err := LoadPublicKey(
+		workingDir + keyDir + modwareServerIP + pubKeyExtension,
+	)
+	if( err != nil ) {
+		fmt.Println( "error getting ModwareServer public and private keys", err )
+		return err 
 	}
 
-	challenge, err := MakeChallenge()
-	if err != nil {
-		log.Printf("Error making challenge: %v", err)
+	// get ModwareClient public key to give to ModwareServer
+	modwareClientPubKey, err := LoadPublicKey (
+		workingDir + keyDir + modwareClientIP + pubKeyExtension,
+	)
+	if( err != nil ) {
+		fmt.Println( "error getting ModwareClient public and private keys", err )
 		return err
 	}
 
-	encryptedChallenge, err := RsaEncrypt(*pubKey, []byte(challenge))
+	// encrypt challenge
+	encryptedChallenge, err := RsaEncrypt(modwareServerPubKey, []byte(chall))
 	if err != nil {
 		log.Printf("Error encrypting challenge: %v", err)
 		return err
 	}
 
+	// create struct
 	encPacket := EncryptedPacket{
 		Challenge: encryptedChallenge,
-		Pmc:       *pubKey,
+		Pmc:       modwareClientPubKey,
 	}
 
+	// encode packet to bytes
 	encPacketBytes, err := encryptedPacketToBytes(encPacket)
 	if err != nil {
 		log.Printf("Error encoding encrypted packet: %v", err)
 		return err
 	}
 
-	_, err = conn.Write(encPacketBytes)
+	// connect to ModwareServer
+	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, modwareServerIP + ":5021" )
 	if err != nil {
-		log.Printf("Error sending encrypted packet: %v", err)
+		fmt.Println( "error resolving address for ModwareServer", err )
+		return err
+	}
+	modwareServerConn, err := net.DialTCP( TYPE, LADDR, modwareServerAddr )
+	if err != nil {
+		fmt.Println( "error dialing ModwareServer", err )
 		return err
 	}
 
-	log.Printf("Sent encrypted challenge and public key for IP: %s\n", ip)
+	// send to ModwareServer
+	_, err = modwareServerConn.Write(encPacketBytes)
+	if err != nil {
+		log.Printf("Error sending encrypted packet: %v", err)
+		modwareServerConn.Close()
+		return err
+	}
+	modwareServerConn.Close()
+	log.Printf("Sent encrypted challenge and public key for IP: %s\n", modwareServerIP)
 	return nil
 }
 
-func handleRequest(conn net.Conn, keyStorage *KeyStorage) {
-	defer conn.Close()
-
-	buf := make([]byte, 1024)
-
-	reqLen, err := conn.Read(buf)
-	if err != nil {
-		log.Printf("Error reading from connection: %v", err)
-		return
+/**
+ * description:
+ *	the key server side implementation for the verify host protocol flow
+ *	
+ *	1) a unique challenge is generated by KeyServer
+ *	2) the KeyServer loads the stored secret key of the ModwareServer
+ *	   that the ModwareClient wants to talk to
+ *	3) the KeyServer uses the ModwareServer secret key to sign the challenge
+ *	4) the KeyServer then signs the ModwareServer signature of the challenge
+ *	5) the data is packaged into a struct, encoded to bytes, encrypted then sent
+ * parameters:
+ *	modwareClientConn -> the connection to the ModwareClient
+ *	pubKeyModwareServer -> the public key of the ModwareServer
+ *	ip -> the of the ModwareServer
+ *	privKeyServer -> the private key of the ModwareServer
+ *	pubKeyCleint -> the public key of the client 
+ * returns:
+ *	nil -> upon sucess
+ *	error -> otherwise
+ */
+func giveModwareClientTheModwareServerPubKey( 
+	modwareClientConn net.Conn,
+	modwareServerIP string, 
+	modwareClientIP string,
+	chall string,
+) error {
+	// get ModwareServer public key for encryption
+	fmt.Println( workingDir + keyDir + modwareServerIP + pubKeyExtension )
+	modwareServerPubKey, modwareServerPrivKey, err := LoadKeys(
+		workingDir + keyDir + modwareServerIP + pubKeyExtension,
+		workingDir + keyDir + modwareServerIP + privKeyExtension,
+	)
+	if( err != nil ) {
+		fmt.Println( "error getting ModwareServer public and private keys", err )
+		return err 
 	}
 
-	request := string(buf[:reqLen])
-
-	switch request {
-
-	case "GIVEPUBKEY":
-		err = givePublicKey(conn, keyStorage)
-	case "SENDENC":
-		// Add the required parameters for sendEncryptedResponse
-		err = sendEncryptedResponse(conn, pubKeyModwareServer, ip, privKeyServer, pubKeyClient)
-	default:
-		err = fmt.Errorf("unknown request")
-	}
-
-	if err != nil {
-		log.Printf("Error handling request '%s': %v", request, err)
-	}
-}
-
-func sendEncryptedPublicKey(conn net.Conn, pubKeyModwareServer *rsa.PublicKey, ip string, privKeyServer *rsa.PrivateKey, pubKeyClient *rsa.PublicKey) error {
-	challenge, err := MakeChallenge()
-	if err != nil {
-		log.Printf("Error making challenge: %v", err)
+	// get ModwareClient public key to give to ModwareServer
+	modwareClientPubKey, _, err := LoadKeys (
+		workingDir + keyDir + modwareClientIP + pubKeyExtension,
+		workingDir + keyDir + modwareClientIP + privKeyExtension,
+	)
+	if( err != nil ) {
+		fmt.Println( "error getting ModwareClient public and private keys", err )
 		return err
 	}
 
-	sigChall, err := RsaSign(privKeyServer, []byte(challenge))
+	// sign challenge with the stored secret key of the
+	// ModwareServer the ModwareClient is trying to talk to
+	sigChall, err := RsaSign(modwareServerPrivKey, []byte(chall), []byte(chall)... )
 	if err != nil {
 		log.Printf("Error signing challenge: %v", err)
 		return err
 	}
+	fmt.Println( sigChall )
 
-	sigKS, err := RsaSign(privKeyServer, sigChall)
+	// have the KeyServer sign the ModwareServer challenge signature
+	sigKS, err := RsaSign(privKey, sigChall)
 	if err != nil {
 		log.Printf("Error signing sigChall: %v", err)
 		return err
 	}
 
-	dataToSend := struct {
-		PublicKey rsa.PublicKey
-		Chall     []byte
-		SigChall  []byte
-		SigKS     []byte
-	}{
-		PublicKey: *pubKeyModwareServer,
-		Chall:     []byte(challenge),
+	// encrypt the bytes and send
+	encryptedChall, err := RsaEncrypt( modwareClientPubKey, []byte(chall) )
+	if err != nil {
+		log.Printf( "Error encrypting challenge: %v", err )
+		return err 
+	}
+
+	// create struct of data to send
+	dataToSend := KeyServerToModwareClient {
+		PublicKey: modwareServerPubKey,
+		Chall:     encryptedChall,
 		SigChall:  sigChall,
 		SigKS:     sigKS,
 	}
 
-	encodedDataToSend, err := RsaEncrypt(*pubKeyClient, dataToSend)
+	// encode struct to bytes
+	encodedDataToSend, err := KeyServerToModwareClientToBytes( dataToSend )
 	if err != nil {
-		log.Printf("Error encrypting data to send: %v", err)
+		log.Printf("Error encoding struct to bytes: %v", err)
 		return err
 	}
-
-	_, err = conn.Write(encodedDataToSend)
+	_, err = modwareClientConn.Write(encodedDataToSend)
 	if err != nil {
 		log.Printf("Error sending encrypted data: %v", err)
 		return err
 	}
 
-	log.Printf("Sent encrypted public key, challenge, and signatures for IP: %s\n", ip)
+	// done
+	log.Printf("Sent encrypted public key, challenge, and signatures for IP: %s\n", modwareServerIP)
 	return nil
 }
 
-func main() {
-	keyStorage := NewKeyStorage()
+/**
+ * description
+ *	handle an incoming request
+ *	should only ever be a ModwareClient
+ * parameters:
+ *	conn -> the connection to the ModwareClient (allegedly)
+*	keyStorage -> the in-memory ip to public key storage
+ */
+func handleRequest(conn net.Conn) {
+	fmt.Println( "accepted request from", conn )
+	defer conn.Close()
 
-	err := filepath.Walk(keyDir, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() && strings.HasSuffix(path, keyExtension) {
-			ip := strings.TrimSuffix(info.Name(), keyExtension)
-			pubKey, err := LoadPublicKey(path)
-			if err != nil {
-				return err
-			}
-			keyStorage.AddKey(ip, &pubKey)
-			fmt.Printf("Loaded key for IP: %s\n", ip)
-		}
-		return nil
-	})
+	buf := make([]byte, 1024)
 
+	// read request from ModwareClient
+	reqLen, err := conn.Read(buf)
 	if err != nil {
-		log.Fatalf("Error loading keys: %v", err)
+		log.Printf("Error reading from connection: %v", err)
+		return
+	}
+	request := buf[:reqLen]
+
+	// decode request to get ModwareServer IP and MAC
+	decodedRequest, err := ModwareClientToKeyServerFromBytes( request )
+	if err != nil {
+		fmt.Println( "Error decoding request to IP and MAC:", err )
+		conn.Close()
+		return
 	}
 
+	// create challenge 
+	chall, err := MakeChallenge()
+	if err != nil {
+		fmt.Println( "error creating challenge", err )
+		conn.Close() 
+		return
+	}
+	fmt.Println( "chall:", chall )
+
+	// get modware client IP
+	modwareClientAddr := conn.RemoteAddr().(*net.TCPAddr)
+	modwareClientIP := modwareClientAddr.IP.String()
+	fmt.Println( "ModwareClientIP:", modwareClientIP )
+
+	// send packet to ModwareClient
+	err = giveModwareClientTheModwareServerPubKey( conn, // socket to ModwareClient
+		decodedRequest.Ip, // ModwareServerIP
+		modwareClientIP,
+		chall,
+ 	)
+	if err != nil {
+		fmt.Println( "error sending packet to client", err )
+		conn.Close()
+		return
+	}
+
+	// send packet to ModwareServer
+	err = giveModwareServerTheModwareClientPubKey(
+		decodedRequest.Ip, // ModwareServer IP
+		modwareClientIP, 
+		chall,
+	)
+	if err != nil {
+		log.Printf("Error handling request '%s': %v", request, err)
+	}
+	conn.Close()
+}
+
+/**
+ * description:
+ *	The driver function for the program
+ */
+func main() {
+	// load keyserver keys
+	var err error
+	pubKey, privKey, err = LoadKeys( PUB_FP, PRIV_FP )
+	if err != nil {
+		fmt.Println( "Error loading KeyServer public and private keys", err )
+		return 
+	}
+
+	// get working directory
+	workingDir, err = os.Getwd()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+	fmt.Println( "working dir:", workingDir )
+
+	// start up server socket and listen for connections
 	listener, err := net.Listen(TYPE, HOST+":"+PORT)
 	if err != nil {
 		log.Fatalf("Error listening on %s:%s: %v", HOST, PORT, err)
@@ -215,6 +316,6 @@ func main() {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
-		go handleRequest(conn, keyStorage)
+		go handleRequest(conn)
 	}
 }

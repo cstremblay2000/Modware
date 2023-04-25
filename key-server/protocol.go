@@ -11,12 +11,15 @@ import (
 
 	"math"
 	"math/big"
+	mrand "math/rand"
 
 	"errors"
 	"io/ioutil"
 
 	"bytes"
 	"encoding/gob"
+
+	"strconv"
 )
 
 /**
@@ -57,6 +60,31 @@ func decodeEncryptedPacketFromBytes(b []byte) (*EncryptedPacket, error) {
 
 /**
  * description:
+ *	the struct sent to the ModwareClient
+ *	that contains the public key of the ModwareServer
+ *	it is trying to communicate with 
+ *	in the VerifyHost flow
+ */
+type KeyServerToModwareClient struct {
+	PublicKey rsa.PublicKey
+	Chall     []byte
+	SigChall  []byte
+	SigKS     []byte
+}
+
+/** 
+ * description
+ *	the struct sent to the KeyServer by
+ *	the ModwareClient to request a public key
+ * 	of a ModwareServer
+ */
+ type ModwareClientToKeyServer struct {
+	Ip string
+	Mac string
+ }
+
+/**
+ * description:
  *	Take an the EncapsulatedModbusPacket struct and convert it to bytes
  * parameteres:
  * 	packetStruct -> the struct
@@ -90,6 +118,80 @@ func DecodeEncapsulatedModbusPacketFromBytes(b []byte) (*EncapsulatedModbusPacke
 		return nil, err
 	}
 	return em, nil
+}
+
+/**
+ * description:
+ *	Take an the KeyServerToModwareClient struct and convert it to bytes
+ * parameteres:
+ * 	packetStruct -> the struct
+ * returns:
+ *	the gob encoded byte array
+ */
+func KeyServerToModwareClientToBytes( packetStruct KeyServerToModwareClient ) ( []byte, error ) {
+	buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    err := enc.Encode(packetStruct)
+    if err != nil {
+        return nil, err
+    }
+    return buf.Bytes(), nil
+}
+
+/**
+ * description:
+ *	Take bytes and decode it to KeyServerToModwareClient struct 
+ * parameteres:
+ * 	bytes -> the struct
+ * returns:
+ *	the KeyServerToModwareClient struct
+ */
+func KeyServerToModwareClientFromBytes(b []byte) (*KeyServerToModwareClient, error) {
+    buf := bytes.NewBuffer(b)
+    dec := gob.NewDecoder(buf)
+    em := &KeyServerToModwareClient{}
+    err := dec.Decode(em)
+    if err != nil {
+        return nil, err
+    }
+    return em, nil
+}
+
+/**
+ * description:
+ *	Take an the ModwareClientToKeyServer struct and convert it to bytes
+ * parameteres:
+ * 	packetStruct -> the struct
+ * returns:
+ *	the gob encoded byte array
+ */
+ func ModwareClientToKeyServerToBytes( packetStruct ModwareClientToKeyServer ) ( []byte, error ) {
+	buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    err := enc.Encode(packetStruct)
+    if err != nil {
+        return nil, err
+    }
+    return buf.Bytes(), nil
+}
+
+/**
+ * description:
+ *	Take bytes and decode it to ModwareClientToKeyServer struct 
+ * parameteres:
+ * 	bytes -> the struct
+ * returns:
+ *	the KeyServerToModwareClient struct
+ */
+func ModwareClientToKeyServerFromBytes(b []byte) (*ModwareClientToKeyServer, error) {
+    buf := bytes.NewBuffer(b)
+    dec := gob.NewDecoder(buf)
+    em := &ModwareClientToKeyServer{}
+    err := dec.Decode(em)
+    if err != nil {
+        return nil, err
+    }
+    return em, nil
 }
 
 /**
@@ -143,6 +245,34 @@ func LoadKeys(pubKeyFile, privateKeyFile string) (rsa.PublicKey, *rsa.PrivateKey
 
 /**
  * description:
+ *	Get the public key associated with the client
+ * parameters:
+ *	filepath -> the IP address of the cleint we are communicating wiht
+ * returns:
+ *	the public key, or an error upon an error
+ */
+ func LoadPublicKey( filepath string ) (rsa.PublicKey, error ) {
+	pubKeyData, err := ioutil.ReadFile( filepath )
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	block, _ := pem.Decode(pubKeyData)
+	if block == nil {
+		return rsa.PublicKey{}, err
+	}
+	if block.Type != "PUBLIC KEY" {
+		return rsa.PublicKey{}, err
+	}
+
+	pKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return rsa.PublicKey{}, err
+	}
+	return *pKey.(*rsa.PublicKey), nil
+}
+
+/**
+ * description:
  *	encrypt a plaintext with RSA
  * parameters:
  *	pubKey -> the public key of the resource to communicate with
@@ -188,10 +318,23 @@ func RsaDecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
  * returns:
  * 	The signature
  */
-func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
-	hashed := sha256.Sum256(message)
+ func RsaSign(privKey *rsa.PrivateKey, message []byte, chall...byte ) ([]byte, error) {
+	hashed := sha256.Sum256( message )
+	if( len(chall) == 0 ){
+		return rsa.SignPSS(
+			rand.Reader,
+			privKey,
+			crypto.SHA256,
+			hashed[:],
+			nil,
+		)
+	} 
+	seed, err := strconv.Atoi( string(chall) )
+	if( err != nil ){
+		return nil, err
+	}
 	return rsa.SignPSS(
-		rand.Reader,
+		mrand.New(mrand.NewSource(int64(seed))),
 		privKey,
 		crypto.SHA256,
 		hashed[:],

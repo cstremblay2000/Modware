@@ -22,20 +22,25 @@ import (
 )
 
 const (
-	HOST = "127.0.0.1"
+	HOST = "127.0.0.2"
 	PORT = "5020"
 	TYPE = "tcp"
 	TIMEOUT = 5 * time.Second 
 	FILE_PRIV = "./client.private"
 	FILE_PUB = "./client.public"
 	MAC = "MAC"
+	KEYSERVER_HOST = "127.0.0.1"
+	KEYSERVER_PORT = "5020"
+	KEYSERVER_KEY  = "./key-server.public"
+	KEYDIR = "/keys/"
+	PUB_EXTENSION = ".public"
 )
 
 var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
-	serverPub rsa.PublicKey
-	serverPriv *rsa.PrivateKey
+	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
+	workingDir = ""
 )
 
 /**
@@ -64,6 +69,7 @@ func attestChallenge( modwareServerConn net.Conn, serverPubKey rsa.PublicKey ) (
 	if( err != nil ) {
 		return "", err
 	}
+	fmt.Println( "enc chall:", enc_chall )
 
 	// write encrypted challenge out to modware server
 	fmt.Println( "Sending Challenge" )
@@ -206,6 +212,7 @@ func forwardModbusResponse( conn net.Conn, response []byte ) error {
  *	negotiate with the KeyServer to start communicating with it
  */
 func verifyModwareServer( modwareServerConn net.Conn ) error {
+	buffer := make( []byte, 3072 )
 	// send MAC address request to ModwareServer
 	_, err := modwareServerConn.Write( []byte( MAC ) )
 	if( err != nil ) {
@@ -214,23 +221,23 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 	}
 
 	// get mac addr from ModwareServer
-	buffer := make( []byte, 1024 )
+	fmt.Println( "waiting for MacAddr" )
 	bytesRead, err := modwareServerConn.Read( buffer )
 	if( err != nil ) {
 		fmt.Println( "error recieving MAC address from ModwareServer", err )
 		return err
 	}
-	//macAddrByte := buffer[:bytesRead]
-	macAddr := string( buffer )
+	macAddr := string( buffer[:bytesRead] )
+	fmt.Println( "recieved mac addr", macAddr )
 
 	// connect to key server and send request for public key of server
-	fmt.Println( "connecting to:", modwareServerConn.RemoteAddr() )
-	keyServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5022" )
+	fmt.Println( "connecting to:", KEYSERVER_HOST )
+	keyServerAddr, err := net.ResolveTCPAddr( TYPE, KEYSERVER_HOST + ":"+ KEYSERVER_PORT )
 	if( err != nil ) {
 		fmt.Println( "Error Resolving TCP Addr", err )
 		return err
 	}
-	keyServerConn, err := net.DialTCP( TYPE, nil, keyServerAddr )
+	keyServerConn, err := net.DialTCP( TYPE, LADDR, keyServerAddr )
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", keyServerAddr, err )
 		return err
@@ -262,78 +269,88 @@ func verifyModwareServer( modwareServerConn net.Conn ) error {
 		fmt.Println( "error recieving response from KeyServer", err )
 		return err 
 	}
-	encryptKeyServerPacket := buffer[:bytesRead] 
+	encodedKeyServerPacket := buffer[:bytesRead] 
 
 	// wait for message from ModwareServer
-	modwareServerBuffer := make( []byte, 1024 )
-	bytesRead, err = modwareServerConn.Read( modwareServerBuffer )
+	modwareServerBuffer := make( []byte, 3072 )
+	fmt.Println( bytesRead )
+	bytesRead, err = modwareServerConn.Read( modwareServerBuffer ) 
 	if( err != nil ) {
 		fmt.Println( "error recieving response ModwareServer", err )
 		return err
 	}
-	encryptModwareServerPacket := modwareServerBuffer[:bytesRead]
+	recievedSignature := modwareServerBuffer[:bytesRead]
 
 	// decrypt packet from KeyServer
-	keyServerPublicKey, err := LoadPublicKey( "../key-server.public" )
-
+	keyServerPublicKey, err := LoadPublicKey( KEYSERVER_KEY )
 	if( err != nil ) {
 		fmt.Println( "error loading key server key", err )
 		return err
 	}
-	encodedKeyServerPacket, err := RsaDecrypt( privKey, encryptKeyServerPacket )
-	if( err != nil ) {
-		fmt.Println( "error decrypting KeyServer packet",err )
-		return err
-	}
 
 	// decode packet from KeyServer
-	decodedKeyServerPacket, err := VerifyHostExpectedResultsFromBytes( encodedKeyServerPacket )
+	decodedKeyServerPacket, err := KeyServerToModwareClientFromBytes( encodedKeyServerPacket )
 	if( err != nil ) {
 		fmt.Println( "error decoding packet to struct from KeyServer", err )
 		return err
 	}
 
+	// decrypt challenge from KeyServer packet
+	chall, err := RsaDecrypt( privKey, decodedKeyServerPacket.Chall )
+	if err != nil {
+		fmt.Println( "Error decrypting challenge from key server:", err )
+		return err 
+	} 
+	fmt.Println( "chall:", string(chall))
+
 	// verify KeyServer signature for the signed challenge
 	err = RsaVerify( keyServerPublicKey, 
-		decodedKeyServerPacket.ModwareServerSignedChallenge,
-		decodedKeyServerPacket.KeyServerSignedSignature,
+		decodedKeyServerPacket.SigChall,
+		decodedKeyServerPacket.SigKS,
 	)
 	if( err != nil ) {
 		fmt.Println( "error verifying KeyServer signed signature", err )
 		return err
 	}
 
-	// decrypt packet from ModwareServer
-	modwareServerKey, err := LoadPublicKey( "../server/sever.public" )
-	if( err != nil ) {
-		fmt.Println( "error loading public key", err )
-		return err
-	}
-	recievedSignature, err := RsaDecrypt( privKey, encryptModwareServerPacket )
-	if( err != nil ) {
-		fmt.Println( "error decrypting ModwareServer signature", err )
-		return err
-	}
-
 	// Verify signature from ModwareServer
-	err = RsaVerify( modwareServerKey, 
-		[]byte(decodedKeyServerPacket.Challenge), 
+	err = RsaVerify( decodedKeyServerPacket.PublicKey, 
+		chall, 
 		recievedSignature,
 	)
 	if( err != nil ) {
 		fmt.Println( "error verifying ModwareServer expected signature", err )
 		return err
 	}
-	
 
-	// check if expected signature from ModwareServer
-	if( bytes.Equal( recievedSignature, decodedKeyServerPacket.ModwareServerSignedChallenge ) ) {
-		return nil
-	} else {
+	// check if expected signature from ModwareServer is same are recieved
+	fmt.Println( recievedSignature ) 
+	fmt.Println( decodedKeyServerPacket.SigChall )
+	if( !bytes.Equal( recievedSignature, decodedKeyServerPacket.SigChall ) ) {
 		return errors.New( "signatures were not the same" )
 	}
+
+	// save public key
+	err = SavePublicKey( 
+		decodedKeyServerPacket.PublicKey,
+		workingDir + KEYDIR + modwareServerIP + PUB_EXTENSION,
+	)
+	if err != nil {
+		fmt.Println( "error saving public key", err )
+		return err
+	}
+
+	// done 
+	return nil
 }
 
+/**
+ * description:
+ *	facilitate verify host flows
+ * 	or verified communication flow
+ * parameters:
+ *	conn -> the connection to Modware Client device
+ */
 func handleRequest(conn net.Conn) {
 	// Handle Incoming Request(s)
 	buffer := make([]byte, 1024)
@@ -347,17 +364,37 @@ func handleRequest(conn net.Conn) {
 
 	// open connection to ModwareServer and send
 	fmt.Println( "connecting to:", conn.RemoteAddr() )
-	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.1:5021" )
+	modwareServerAddr, err := net.ResolveTCPAddr( TYPE, "127.0.0.3:5020" )
 	if( err != nil ) {
 		fmt.Println( "Error Resolving TCP Addr", err )
 		return
 	}
 
 	//modwareServerConn, err := net.DialTCP( TYPE, nil, conn.RemoteAddr().(*net.TCPAddr) )
-	modwareServerConn, err := net.DialTCP( TYPE, nil, modwareServerAddr )
+	modwareServerConn, err := net.DialTCP( TYPE, LADDR, modwareServerAddr )
 	if( err != nil ) {
 		fmt.Println( "Error Dialing Addr", modwareServerAddr, err )
 		return
+	}
+
+	// check if host is known
+	_, err = os.Stat(workingDir + KEYDIR + modwareServerAddr.IP.String() + PUB_EXTENSION ) 
+	if( os.IsNotExist( err ) ) {
+		fmt.Println( "ModwareServer not known, beginning verification process")
+		err = verifyModwareServer( modwareServerConn )
+		if( err != nil ) {
+			fmt.Println( "error authentication ModwareServer", err )
+			return
+		} else {
+			fmt.Println( "successfully verified ModwareServer")
+		}
+	}
+
+	// key should exist by this point
+	serverPub, err := LoadPublicKey( workingDir + KEYDIR + modwareServerAddr.IP.String() + PUB_EXTENSION )
+	if err != nil {
+		fmt.Printf( "Error loading ModwareServer public key for %s %v\n", modwareServerAddr.IP.String(), err )
+		return 
 	}
 
 	// perform attestation with challenge
@@ -414,14 +451,15 @@ func handleRequest(conn net.Conn) {
 func main() {
 	var err error
 
-		// get public and private keys
-	pubKey, privKey, err = LoadKeys( FILE_PUB, FILE_PRIV )
-	if( err != nil ) {
-		println( "Couldn't load public/private keys:", err.Error() )
-		os.Exit(1)
-	}
+	// get working direrctory
+	workingDir, err = os.Getwd()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+	fmt.Println( "working dir:", workingDir )
 
-	serverPub, serverPriv, err = LoadKeys( "../dev_utils/server.public", "../dev_utils/server.private" )
+	// get public and private keys
+	pubKey, privKey, err = LoadKeys( FILE_PUB, FILE_PRIV )
 	if( err != nil ) {
 		println( "Couldn't load public/private keys:", err.Error() )
 		os.Exit(1)

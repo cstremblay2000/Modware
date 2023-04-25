@@ -11,12 +11,17 @@ import (
 
 	"math"
 	"math/big"
+	mrand "math/rand"
 
 	"io/ioutil"
 	"errors"
 
 	"bytes"
 	"encoding/gob"
+	
+	"strconv"
+
+	"os"
 )
 
 /**
@@ -38,6 +43,32 @@ type EncapsulatedModbusPacket struct {
 type KeyServerChallengePublicKey struct {
 	PublicKey rsa.PublicKey
 	Chall []byte
+}
+
+type EncryptedPacket struct {
+	Challenge []byte
+	Pmc       rsa.PublicKey
+}
+
+func encryptedPacketToBytes(packetStruct EncryptedPacket) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	enc := gob.NewEncoder(buf)
+	err := enc.Encode(packetStruct)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func decodeEncryptedPacketFromBytes(b []byte) (*EncryptedPacket, error) {
+	buf := bytes.NewBuffer(b)
+	dec := gob.NewDecoder(buf)
+	ep := &EncryptedPacket{}
+	err := dec.Decode(ep)
+	if err != nil {
+		return nil, err
+	}
+	return ep, nil
 }
 
 /**
@@ -193,6 +224,45 @@ func DecodeVerifyHostKeyServerChallPublicKeyFromBytes(b []byte) (*KeyServerChall
 
 /**
  * description:
+ *	Save a public key to a PEM encoded file
+ * parameters:
+ *	pubKey -> the public key structure we want to save
+ *	filepath -> where we want to save the key 
+ * returns:
+ * 	nil -> upon success
+ *	error -> otherwise
+ */
+ func SavePublicKey( pubKey rsa.PublicKey, filepath string ) error {
+	// get bytes
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey( &pubKey )
+	if err != nil {
+		return err 
+	}
+
+	// instantiate PEM block
+	publicKeyPEM := &pem.Block {
+		Type: "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	}
+
+	// create and open file
+	file, err := os.Create( filepath )
+	if err != nil {
+		return err 
+	}
+	defer file.Close()
+
+	// write to file
+	err = pem.Encode( file, publicKeyPEM )
+	if err != nil {
+		return err 
+	}
+
+	return nil
+}
+
+/**
+ * description:
  *	encrypt a plaintext with RSA
  * parameters:
  *	pubKey -> the public key of the resource to communicate with
@@ -238,10 +308,23 @@ func RsaDecrypt(privKey *rsa.PrivateKey, ciphertext []byte) ([]byte, error) {
  * returns:
  * 	The signature
  */
-func RsaSign(privKey *rsa.PrivateKey, message []byte) ([]byte, error) {
+ func RsaSign(privKey *rsa.PrivateKey, message []byte, chall...byte ) ([]byte, error) {
 	hashed := sha256.Sum256( message )
+	if( len(chall) == 0 ){
+		return rsa.SignPSS(
+			rand.Reader,
+			privKey,
+			crypto.SHA256,
+			hashed[:],
+			nil,
+		)
+	} 
+	seed, err := strconv.Atoi( string(chall) )
+	if( err != nil ){
+		return nil, err
+	}
 	return rsa.SignPSS(
-		rand.Reader,
+		mrand.New(mrand.NewSource(int64(seed))),
 		privKey,
 		crypto.SHA256,
 		hashed[:],
