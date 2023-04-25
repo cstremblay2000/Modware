@@ -313,7 +313,7 @@ func SavePublicKey( pubKey rsa.PublicKey, filepath string ) error {
 
 	// instantiate PEM block
 	publicKeyPEM := &pem.Block {
-		Type: "RSA PUBLIC KEY",
+		Type: "PUBLIC KEY",
 		Bytes: pubKeyBytes,
 	}
 

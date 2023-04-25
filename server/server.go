@@ -27,12 +27,15 @@ const (
 	MAC  = "MAC"
 	KEYSERVER_HOST = "127.0.0.1"
 	KEYSERVER_PORT = "5020"
+	KEYDIR = "/keys/"
+	PUB_EXTENSION = ".public"
 )
 
 var (
 	pubKey rsa.PublicKey
 	privKey *rsa.PrivateKey
 	LADDR = &net.TCPAddr{IP: net.ParseIP(HOST), Port: 0}
+	workingDir = ""
 )
 
 /**
@@ -215,15 +218,17 @@ func forwardModbusResponse( modwareClientConn net.Conn, clientPublicKey rsa.Publ
  *	error upon error
  *	nil upon success
  */
-func verifiedCommunication( conn net.Conn  ) error {
+func verifiedCommunication( conn net.Conn, recvMsg...byte  ) error {
 	// read message
-	buffer := make( []byte, 1024 )
-	bytesRead, err := conn.Read( buffer )
-	if err != nil {
-		fmt.Println( "error recieving message from client:", err )
-		return err 
+	if( len(recvMsg) == 0 ) {
+		buffer := make( []byte, 1024 )
+		bytesRead, err := conn.Read( buffer )
+		if err != nil {
+			fmt.Println( "error recieving message from client:", err )
+			return err 
+		}
+		recvMsg = buffer[:bytesRead]
 	}
-	recvMsg := buffer[:bytesRead]
 	
 	// get ip of client device
 	remoteAddr := conn.RemoteAddr()
@@ -235,7 +240,7 @@ func verifiedCommunication( conn net.Conn  ) error {
     fmt.Println("IP address:", clientIP)
 
 	// get public key of client
-	clientPublicKey, err := LoadPublicKey( "../client/client.public" )
+	clientPublicKey, err := LoadPublicKey( workingDir + KEYDIR + clientIP + PUB_EXTENSION )
 	if( err != nil ) {
 		fmt.Println( "error getting ModwareClient public key", err )
 		return err
@@ -295,6 +300,16 @@ func verifiedCommunication( conn net.Conn  ) error {
 	return nil
 }
 
+/**
+ * description:
+ *	when a ModwareClient wants to verify authenticitiy
+ *	of a ModwareServer
+ * parameters:
+ *	modwareClientConn -> the socket to the ModwareClient
+ * returns:
+ *	nil -> upon success
+ *	error -> otherwise
+ */
 func verifyHost( modwareClientConn net.Conn ) error {
 	// get mac addr
     iface, err := net.InterfaceByName("lo")
@@ -370,6 +385,16 @@ func verifyHost( modwareClientConn net.Conn ) error {
 	}
 
 	// save public key to PEM encoded file
+	remoteAddr := modwareClientConn.RemoteAddr()
+	tcpAddr, ok := remoteAddr.(*net.TCPAddr)
+	if !ok {
+		fmt.Println( "error getting tcp addr from net.conn" )
+		return errors.New( "error getting tcp addr from net.conn" )
+	}
+	err = SavePublicKey( 
+		packetStruct.Pmc,
+		workingDir + KEYDIR + tcpAddr.IP.String() + PUB_EXTENSION,
+	)
 	return nil
 }
 
@@ -399,14 +424,22 @@ func handleRequest(conn net.Conn) {
 			conn.Close()
 			return
 		}
-	}
-	
-	// continute with verified communication
-	err = verifiedCommunication( conn )
-	if( err != nil ) {
-		fmt.Println( "Error performing secure communciation" )
-		conn.Close()
-		return
+
+		// continute with verified communication
+		err = verifiedCommunication( conn )
+		if( err != nil ) {
+			fmt.Println( "Error performing secure communciation" )
+			conn.Close()
+			return
+		}
+	} else {
+		// continute with verified communication
+		err = verifiedCommunication( conn, recvMsg... )
+		if( err != nil ) {
+			fmt.Println( "Error performing secure communciation" )
+			conn.Close()
+			return
+		}
 	}
 
 	// Close Connection
@@ -425,6 +458,13 @@ func main() {
 		log.Fatal( err )
 		os.Exit( 1 )
 	}
+
+	// get working direrctory
+	workingDir, err = os.Getwd()
+    if err != nil {
+        fmt.Println("Error:", err)
+    }
+	fmt.Println( "working dir:", workingDir )
 
 	// start a server socket
 	listen, err := net.Listen(TYPE, HOST+":"+PORT)
