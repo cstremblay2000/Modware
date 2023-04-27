@@ -1,5 +1,5 @@
 # Modware
-This project was developed for the 2255 CSEC-741-01 Internet of Things Security calss of the Spring 2022 semester. 
+This project was developed for the 2255 CSEC-741-01 Internet of Things Security calss of the Spring 2022 semester. Check out our [slides](./documents/project-proposal-slides.pdf) and [paper](./documents/paper.pdf)
 
 ![Basic System Model](./pics/basic-architecture.png)
 
