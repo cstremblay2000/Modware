@@ -1,8 +1,7 @@
 # Modware
 This project was developed for the 2255 CSEC-741-01 Internet of Things Security calss of the Spring 2022 semester. 
 
-![Basic System Model](./pics/
-basic-architecture.png)
+![Basic System Model](./pics/basic-architecture.png)
 
 Our project seeks to develop an unobtrusive client/server middleware solution that enables secure communication without intrusive modifications to the existing hardware or extensive time investment for integration. Recognizing that the data transmitted by Modbus devices is intrinsically insecure, our middleware is strategically designed to be positioned in close proximity to the devices, preferably on the same switch or even in line. This approach minimizes the duration of unencrypted traffic, significantly reducing the window of vulnerability.
 
